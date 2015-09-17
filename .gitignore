@@ -1,0 +1,28 @@
+*.class
+*/target
+target
+
+*.log
+
+dependency-reduced-pom.xml
+
+# IntelliJ IDE
+/.idea
+*.iml
+*.ipr
+*.iws
+
+# Packaging 
+*.jar
+*.war
+*.ear
+
+
+*.DS_Storei
+
+# Eclipse
+*.project
+*.settings
+*.classpath
+
+provider/bin
