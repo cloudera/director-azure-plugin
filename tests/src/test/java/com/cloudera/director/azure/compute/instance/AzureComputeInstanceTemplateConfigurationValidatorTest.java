@@ -179,7 +179,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   }
 
   //
-  // This is the only test that calls AzureComputeInstanceTemplateConfigurationValidator.validate()
+  // This is test calls AzureComputeInstanceTemplateConfigurationValidator.validate()
   //
 
   @Test
@@ -211,6 +211,17 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
       .checkResourceGroup(defaultDirectorConfig, accumulator, localizationContext, helper);
     verify(validator, times(1))
       .checkVmImage(defaultDirectorConfig, accumulator, localizationContext, helper);
+  }
+
+  @Test
+  public void validate_UnknownException() throws Exception {
+    AzureComputeInstanceTemplateConfigurationValidator validator = spy(this.validator);
+    when(helper.getMarketplaceVMImage(anyString(), any(AzureVmImageInfo.class)))
+      .thenThrow(new RuntimeException());
+    validator.validate(null, defaultDirectorConfig, accumulator, localizationContext);
+
+    assertEquals("Should catch and log generic exception.",
+      1, accumulator.getConditionsByKey().size());
   }
 
   //
@@ -1107,6 +1118,19 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
     validator.checkVmImage(defaultDirectorConfig, accumulator, localizationContext, helper);
 
     assertEquals("Non-existent VM image should be caught", 1,
+      accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void testImagePermissionProblemWithIllegalArgumentException() throws Exception {
+    doThrow(new IllegalArgumentException())
+      .when(helper)
+      .getMarketplaceVMImage(anyString(), any(AzureVmImageInfo.class));
+
+    validator.checkVmImage(defaultDirectorConfig, accumulator, localizationContext, helper);
+
+    assertEquals("Problematic permission VM image with IllegalArgument Exception should be " +
+      "caught", 1,
       accumulator.getConditionsByKey().size());
   }
 

@@ -126,7 +126,7 @@ public class AzureComputeProviderTest {
   private String vnetRg = "vnetRg";
   private String nsgName = "nsg";
   private String availabilitySet = "asn";
-  private String privateDomainName = "test.domain.com";
+  private String privateDomainName = "cdh-cluster.internal";
   private ComputeManagementClient client = mock(ComputeManagementClient.class);
   private VirtualMachineOperations vmop = mock(VirtualMachineOperations.class);
   private VirtualMachineGetResponse vmgr = mock(VirtualMachineGetResponse.class);
@@ -262,7 +262,7 @@ public class AzureComputeProviderTest {
     Future<TaskResult> task = mock(Future.class);
     when(task.isDone()).thenReturn(true);
     when(task.get()).thenReturn(new TaskResult(true, null));
-    when(computeProviderHelper.submitDeleteVmTask(resourceGroup, vm)).thenReturn(task);
+    when(computeProviderHelper.submitDeleteVmTask(resourceGroup, vm, true)).thenReturn(task);
     when(computeProviderHelper.pollPendingTask(any(Future.class), anyInt(), anyInt()))
       .thenCallRealMethod();
     when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
@@ -307,7 +307,7 @@ public class AzureComputeProviderTest {
     list.add(instanceId);
 
     computeProvider.allocate(template, list, 1);
-    verify(computeProviderHelper).deleteResources(anyString(), anySet());
+    verify(computeProviderHelper).deleteResources(anyString(), anySet(), anyBoolean());
   }
 
   @Test
@@ -348,7 +348,7 @@ public class AzureComputeProviderTest {
     ArgumentCaptor<Set> argumentCaptor = ArgumentCaptor.forClass(Set.class);
     computeProvider.allocate(template, instances, 3);
 
-    verify(computeProviderHelper).deleteResources(anyString(), argumentCaptor.capture());
+    verify(computeProviderHelper).deleteResources(anyString(), argumentCaptor.capture(), anyBoolean());
     for (int i = 0; i < 4; i++) {
       verify(computeProviderHelper).submitVmCreationTask(contexts.get(i), vnet, subnet, nsg, as,
         vmSize, vmNamePrefix, instances.get(i), privateDomainName, userName, publicKey,
@@ -375,7 +375,7 @@ public class AzureComputeProviderTest {
     try {
       computeProvider.allocate(template, list, 1);
     } catch (Exception e) {
-      verify(computeProviderHelper).deleteResources(anyString(), anySet());
+      verify(computeProviderHelper).deleteResources(anyString(), anySet(), anyBoolean());
       throw e;
     }
   }

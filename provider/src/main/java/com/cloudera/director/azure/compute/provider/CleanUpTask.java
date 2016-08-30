@@ -46,6 +46,7 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
   private ResourceContext context;
   private String resourceGroup;
   private VirtualMachine vm; // this is not null if we have a live VM
+  private boolean isPublicIPConfigured;
   private DateTime startTime;
   private static final Logger LOG = LoggerFactory.getLogger(CleanUpTask.class);
 
@@ -54,16 +55,17 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
    *
    * NOTE: This method assume the VM is properly created and the VM object contain all the info
    * needed for proper cleanup.
-   *
-   * @param resourceGroup Azure Resource Group name
-   * @param vm            VirtualMachine info
+   * @param resourceGroup         Azure Resource Group name
+   * @param vm                    VirtualMachine info
    * @param computeProviderHelper
+   * @param isPublicIPConfigured  does the template define a public IP that should be cleaned up
    */
   public CleanUpTask(String resourceGroup, VirtualMachine vm,
-                     AzureComputeProviderHelper computeProviderHelper) {
+    AzureComputeProviderHelper computeProviderHelper, boolean isPublicIPConfigured) {
     this.resourceGroup = resourceGroup;
     this.vm = vm;
     this.computeProviderHelper = computeProviderHelper;
+    this.isPublicIPConfigured = isPublicIPConfigured;
     this.startTime = DateTime.now();
   }
 
@@ -72,16 +74,17 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
    *
    * NOTE: VM object may or may not be created properly, use info in the resource context to delete
    * any left over resources.
-   *
    * @param resourceGroup Azure Resource Group name
    * @param context       ResourceContext info
    * @param computeProviderHelper
+   * @param isPublicIPConfigured
    */
   public CleanUpTask(String resourceGroup, ResourceContext context,
-                     AzureComputeProviderHelper computeProviderHelper) {
+    AzureComputeProviderHelper computeProviderHelper, boolean isPublicIPConfigured) {
     this.resourceGroup = resourceGroup;
     this.context = context;
     this.computeProviderHelper = computeProviderHelper;
+    this.isPublicIPConfigured = isPublicIPConfigured;
     this.startTime = DateTime.now();
     this.vm = null;
   }
@@ -158,7 +161,8 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
     OperationResponse result;
     String nicName = computeProviderHelper.getNicNameFromVm(vm);
     try {
-      result = computeProviderHelper.beginDeleteNetworkResourcesOnVM(resourceGroup, vm);
+      result = computeProviderHelper.beginDeleteNetworkResourcesOnVM(resourceGroup, vm,
+        isPublicIPConfigured);
       LOG.debug("VM: {}. Delete NetworkInterface {} status code: {}.",
         vmName, nicName, result.getStatusCode());
     } catch (IOException | ServiceException | ExecutionException | InterruptedException e) {
@@ -233,7 +237,7 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
       }
     }
 
-    if (context.getPublicIpAddress() != null) {
+    if (isPublicIPConfigured && context.getPublicIpAddress() != null) {
       String pip = context.getPublicIpName();
       try {
         result = computeProviderHelper.beginDeletePublicIpAddressByName(resourceGroup, pip);
@@ -243,7 +247,10 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
         hasError = true;
         LOG.error("VM: {}. Delete PublicIP {} encountered error:", vmName, pip, e);
       }
-    }
+    } else {
+      LOG.debug("Skipping delete of public IP address: isPublicIPConfigured {}; " +
+        "context.getPublicIpAddress(): {}", isPublicIPConfigured, context.getPublicIpAddress());
+  }
 
     long timeSeconds = (DateTime.now().getMillis() - startTime.getMillis()) / 1000;
     LOG.info("Delete VM {} context resources took {} seconds.", vm.getName(), timeSeconds);

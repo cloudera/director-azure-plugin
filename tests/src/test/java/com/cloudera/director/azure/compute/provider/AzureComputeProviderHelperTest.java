@@ -22,6 +22,7 @@ import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -226,11 +227,11 @@ public class AzureComputeProviderHelperTest {
 
 
   //
-  // beginDeleteStorageAccountOnVM() Tests
+  // beginDeleteNetworkResourcesOnVM() Tests
   //
 
   @Test
-  public void beginDeleteStorageAccountOnVM_validInput_correctlyParses() throws Exception {
+  public void beginDeleteNetworkResourcesOnVM_validInput_correctlyParses() throws Exception {
     String pipBase = "/subscriptions/e39b1984-855f-43b2-8c9d-4dffef728fe3/resourceGroups/pluginUn" +
       "itTestResourceGroup/providers/Microsoft.Network/publicIPAddresses/";
     String pip = "pluginUnitTestResourceGrouppublicipuqoks";
@@ -255,10 +256,43 @@ public class AzureComputeProviderHelperTest {
       .beginDeleting(anyString(), anyString()))
       .thenReturn(mock(UpdateOperationResponse.class));
 
-    helper.beginDeleteNetworkResourcesOnVM(rgName, vm);
+    helper.beginDeleteNetworkResourcesOnVM(rgName, vm, true);
 
     // verifies that this method was called with the correct parsed out value
     verify(networkResourceProviderClient.getPublicIpAddressesOperations())
+      .beginDeleting(rgName, pip);
+  }
+
+  @Test
+  public void beginDeleteNetworkResourcesOnVM_noPublicIP_doesNotDeletePublicIP() throws Exception {
+    String pipBase = "/subscriptions/e39b1984-855f-43b2-8c9d-4dffef728fe3/resourceGroups/pluginUn" +
+      "itTestResourceGroup/providers/Microsoft.Network/publicIPAddresses/";
+    String pip = "pluginUnitTestResourceGrouppublicipuqoks";
+
+    when(vm.getNetworkProfile().getNetworkInterfaces().get(0).getReferenceUri())
+      .thenReturn(niURI);
+    when(networkResourceProviderClient.getNetworkInterfacesOperations()
+      .get(anyString(), anyString()))
+      .thenReturn(networkInterfaceGetResponse);
+    when(networkInterfaceGetResponse.getNetworkInterface())
+      .thenReturn(networkInterface);
+    when(networkInterface.getIpConfigurations().get(0))
+      .thenReturn(networkInterfaceIpConfiguration);
+    when(networkResourceProviderClient.getNetworkInterfacesOperations()
+      .delete(anyString(), anyString()))
+      .thenReturn(operationResponse);
+    when(networkInterfaceIpConfiguration.getPublicIpAddress())
+      .thenReturn(resourceId);
+    when(networkInterfaceIpConfiguration.getPublicIpAddress().getId())
+      .thenReturn(pipBase + pip);
+    when(networkResourceProviderClient.getPublicIpAddressesOperations()
+      .beginDeleting(anyString(), anyString()))
+      .thenReturn(mock(UpdateOperationResponse.class));
+
+    helper.beginDeleteNetworkResourcesOnVM(rgName, vm, false);
+
+    // verifies that the template was correctly parsed out and the publicIP was not deleted
+    verify(networkResourceProviderClient.getPublicIpAddressesOperations(), never())
       .beginDeleting(rgName, pip);
   }
 

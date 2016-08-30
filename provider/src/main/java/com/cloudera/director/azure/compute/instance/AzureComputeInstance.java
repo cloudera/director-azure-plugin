@@ -102,6 +102,20 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
     },
 
     /**
+     * The private FQDN for each host
+     */
+    PRIVATE_FQDN(new SimpleDisplayPropertyBuilder()
+      .displayKey("privateFqdn")
+      .name("Private FQDN")
+      .defaultDescription("The private FQDN for each host.")
+      .build()) {
+      @Override
+      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
+        return instanceHelper.getPrivateFqdn();
+      }
+    },
+
+    /**
      * The public IP address assigned to the instance.
      */
     PUBLIC_IP_ADDRESS(new SimpleDisplayPropertyBuilder()
@@ -113,6 +127,20 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
       protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
         InetAddress publicIp = instanceHelper.getPublicIpAddress();
         return (publicIp == null) ? null : publicIp.getHostAddress();
+      }
+    },
+
+    /**
+     * The public FQDN for each host
+     */
+    PUBLIC_FQDN(new SimpleDisplayPropertyBuilder()
+      .displayKey("publicFqdn")
+      .name("Public FQDN")
+      .defaultDescription("The public FQDN for each host.")
+      .build()) {
+      @Override
+      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
+        return instanceHelper.getPublicFqdn();
       }
     };
 

@@ -17,6 +17,7 @@
 package com.cloudera.director.azure.compute.provider;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
@@ -26,6 +27,7 @@ import java.util.concurrent.Future;
 
 import com.cloudera.director.azure.TestConfigHelper;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
+import com.cloudera.director.azure.compute.instance.AzureComputeInstanceHelper;
 import com.cloudera.director.azure.compute.instance.TaskResult;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.ComputeManagementClient;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.ComputeManagementService;
@@ -37,6 +39,10 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network
 import com.cloudera.director.azure.shaded.com.microsoft.azure.utility.ResourceContext;
 import com.cloudera.director.azure.shaded.com.microsoft.windowsazure.Configuration;
 import com.cloudera.director.azure.shaded.com.microsoft.windowsazure.exception.ServiceException;
+import com.cloudera.director.spi.v1.model.InstanceStatus;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resources.ResourceManagementClient;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resources.ResourceManagementService;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resources.models.ResourceGroup;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -70,6 +76,9 @@ public class AzureComputeProviderHelperLiveTest {
   AvailabilitySet as;
   NetworkSecurityGroup nsg;
   ResourceContext context;
+  String resourceGroup;
+  static final int RESOURCE_PREFIX_LENGTH = 8;
+  static final String RESOURCE_NAME_TEMPLATE = "%s%s%s";
 
   @BeforeClass
   public static void checkLiveTestFlag() {
@@ -87,7 +96,7 @@ public class AzureComputeProviderHelperLiveTest {
     vmNamePrefix = "test";
     instanceId = UUID.randomUUID().toString();
     vmName = vmNamePrefix + "-" + instanceId;
-    fqdnSuffix = "test.domain.com";
+    fqdnSuffix = "cdh-cluster.internal";
     vmSize = "Standard_DS2";
     vnet = helper.getVirtualNetworkByName(
       TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP,
@@ -104,6 +113,7 @@ public class AzureComputeProviderHelperLiveTest {
       TestConfigHelper.DEFAULT_TEST_SUBNET);
 
     context = buildContext(cred, vmName, vnet);
+    resourceGroup = context.getResourceGroupName();
   }
 
   @After
@@ -152,18 +162,19 @@ public class AzureComputeProviderHelperLiveTest {
     helper.pollPendingTask(vmr, 1800, 10);
     LOG.info("VM {} is created.", vmName);
 
-    // FIXME this is kind of a find test, change to use ComputeProvider's API instead
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
       TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName).getVirtualMachine();
 
-    // FIXME add VM status test
+    assertEquals(InstanceStatus.RUNNING, helper.getVirtualMachineStatus(resourceGroup, vmName)
+      .getInstanceStatus());
 
     // wait a little before deleting the VM and its supporting resources.
     Thread.sleep(10 * 1000);
 
     LOG.info("Start delete VM {}.", vmName);
 
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm);
+    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
+      true);
 
     helper.pollPendingTask(deleteTask, 1800, 10);
 
@@ -173,6 +184,7 @@ public class AzureComputeProviderHelperLiveTest {
       computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
         TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName).getVirtualMachine();
     } catch (ServiceException e) {
+      LOG.debug("ServiceException:", e);
       assertTrue(e.getMessage().contains(vmName));
       hitException = true;
     }
@@ -184,10 +196,10 @@ public class AzureComputeProviderHelperLiveTest {
   }
 
   /**
-   * This test verifies idempotency from Azure by creating a VM and then creating the same VM again
-   * (same instanceId, same context). Under the hood submitVmCreationTask() will call
-   * VirtualMachineOperations#beginCreatingOrUpdating(). The expected outcome from the second
-   * beginCreatingOrUpdating() call is a VM update with the same context and "successful" return.
+   * This test verifies idempotency from Azure by creating a VM and then creating the same VM
+   * again (same instanceId, same context). The expected outcome from the second call is a
+   * ServiceException indicating the resources are being used. The first VM creation should
+   * still succeed.
    *
    * @throws Exception
    */
@@ -203,11 +215,8 @@ public class AzureComputeProviderHelperLiveTest {
     assertEquals(1, helper.pollPendingTask(vmr, 1800, 10));
 
     LOG.info("VM {} is created.", vmName);
-
-    // FIXME this is kind of a find test, change to use ComputeProvider's API instead
-    VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations()
-      .getWithInstanceView(TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName)
-      .getVirtualMachine();
+    assertEquals(InstanceStatus.RUNNING, helper.getVirtualMachineStatus(resourceGroup, vmName)
+      .getInstanceStatus());
 
     LOG.info("Start (second of two) create VM {}.", vmName);
 
@@ -217,16 +226,19 @@ public class AzureComputeProviderHelperLiveTest {
       TestConfigHelper.DEFAULT_TEST_SSH_USERNAME, TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, 2,
       cfgHelper.getDefaultImageInfo());
 
-    // verify that a second submitVmCreationTask() with the same parameters returns successfully
-    assertEquals(1, helper.pollPendingTask(vmrTwo, 1800, 10));
-    LOG.info("VM {} is created.", vmName);
-
+    //verify that a second submitVmCreationTask() with the same parameters doesn't error out
+    helper.pollPendingTask(vmrTwo, 1800, 10);
+    assertEquals(InstanceStatus.RUNNING, helper.getVirtualMachineStatus(resourceGroup, vmName)
+      .getInstanceStatus());
     // wait a little before deleting the VM and its supporting resources.
     Thread.sleep(10 * 1000);
 
     LOG.info("Start delete vm " + vmName);
-
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm);
+    VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations()
+      .getWithInstanceView(TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName)
+      .getVirtualMachine();
+    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
+      true);
 
     helper.pollPendingTask(deleteTask, 1800, 10);
 
@@ -236,6 +248,7 @@ public class AzureComputeProviderHelperLiveTest {
       computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
         TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName).getVirtualMachine();
     } catch (ServiceException e) {
+      LOG.debug("ServiceException:", e);
       assertTrue(e.getMessage().contains(vmName));
       hitException = true;
     }
@@ -247,7 +260,7 @@ public class AzureComputeProviderHelperLiveTest {
   }
 
   @Test
-  public void submitDeleteVmTask_doubleDeleteVM_isIdempotentAndDoesnotError() throws Exception {
+  public void submitDeleteVmTask_doubleDeleteVM_isIdempotentAndDoesNotError() throws Exception {
     LOG.info("Start create vm " + vmName);
     Future<TaskResult> vmr = helper.submitVmCreationTask(
       context, vnet, subnet, nsg, as, vmSize, vmNamePrefix, instanceId, fqdnSuffix,
@@ -257,18 +270,19 @@ public class AzureComputeProviderHelperLiveTest {
     helper.pollPendingTask(vmr, 1800, 10);
     LOG.info("VM {} is created.", vmName);
 
-    // FIXME this is kind of a find test, change to use ComputeProvider's API instead
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
       TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName).getVirtualMachine();
 
-    // FIXME add VM status test
+    assertEquals(InstanceStatus.RUNNING, helper.getVirtualMachineStatus(resourceGroup, vmName)
+      .getInstanceStatus());
 
     // wait a little before deleting the VM and its supporting resources.
     Thread.sleep(10 * 1000);
 
     LOG.info("Start delete vm " + vmName);
 
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm);
+    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
+      true);
 
     // the vm should be deleted
     assertEquals(1, helper.pollPendingTask(deleteTask, 1800, 10));
@@ -279,6 +293,7 @@ public class AzureComputeProviderHelperLiveTest {
       computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
         TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName).getVirtualMachine();
     } catch (ServiceException e) {
+      LOG.debug("ServiceException:", e);
       assertTrue(e.getMessage().contains(vmName));
       hitException = true;
     }
@@ -288,7 +303,8 @@ public class AzureComputeProviderHelperLiveTest {
 
     LOG.info("VM {} deleted.", vmName);
 
-    Future<TaskResult> deleteAgain = helper.submitDeleteVmTask(context.getResourceGroupName(), vm);
+    Future<TaskResult> deleteAgain = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
+      true);
 
     // nothing should be deleted as it's already been deleted once
     assertEquals(0, helper.pollPendingTask(deleteAgain, 1800, 10));
@@ -301,6 +317,7 @@ public class AzureComputeProviderHelperLiveTest {
         .getWithInstanceView(TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName)
         .getVirtualMachine();
     } catch (ServiceException e) {
+      LOG.debug("ServiceException:", e);
       assertTrue(e.getMessage().contains(vmName));
       hitException = true;
     }
@@ -333,7 +350,8 @@ public class AzureComputeProviderHelperLiveTest {
 
     LOG.info("Start delete VM {}.", vmName);
 
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm);
+    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
+      true);
 
     helper.pollPendingTask(deleteTask, 1800, 10);
 
@@ -343,6 +361,7 @@ public class AzureComputeProviderHelperLiveTest {
       computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
         TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName).getVirtualMachine();
     } catch (ServiceException e) {
+      LOG.debug("ServiceException:", e);
       assertTrue(e.getMessage().contains(vmName));
       hitException = true;
     }
@@ -353,6 +372,121 @@ public class AzureComputeProviderHelperLiveTest {
     LOG.info("VM {} deleted.", vmName);
   }
 
+  /**
+   * Tests the AzureComputeInstanceHelper get methods:
+   *   - getImageReference()
+   *   - getInstanceID()
+   *   - getInstanceType()
+   *   - getPrivateIpAddress()
+   *   - getPrivateFqdn()
+   *   - getPublicIpAddress()
+   *   - getPublicFqdn()
+   *
+   * @throws Exception
+   */
+  @Test
+  public void AzureComputeInstanceDisplayPropertyToken_standardSetup_allTokensCorrect()
+    throws Exception {
+    LOG.info("Start create vm " + vmName);
+    Future<TaskResult> vmr = helper.submitVmCreationTask(
+      context, vnet, subnet, nsg, as, vmSize, vmNamePrefix, instanceId, fqdnSuffix,
+      TestConfigHelper.DEFAULT_TEST_SSH_USERNAME, TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, 2,
+      cfgHelper.getDefaultImageInfo());
+
+    helper.pollPendingTask(vmr, 1800, 10);
+    LOG.info("VM {} is created.", vmName);
+
+    VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations()
+      .getWithInstanceView(TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP, vmName)
+      .getVirtualMachine();
+
+    // VM is up, test the AzureComputeInstanceHelper get methods
+    AzureComputeInstanceHelper azureComputeInstanceHelper =
+      helper.createAzureComputeInstanceHelper(vm, cred, context.getResourceGroupName());
+
+    // getImageReference()
+    assertNotNull(azureComputeInstanceHelper.getImageReference());
+    assertEquals("CLOUDERA-CENTOS-6", azureComputeInstanceHelper.getImageReference());
+
+    // getInstanceID()
+    assertNotNull(azureComputeInstanceHelper.getInstanceID());
+
+    // getInstanceType()
+    assertNotNull(azureComputeInstanceHelper.getInstanceType());
+    assertEquals("Standard_DS2", azureComputeInstanceHelper.getInstanceType());
+
+    // getPrivateIpAddress()
+    assertNotNull(azureComputeInstanceHelper.getPrivateIpAddress());
+
+    // getPrivateFqdn()
+    assertNotNull(azureComputeInstanceHelper.getPrivateFqdn());
+    assertEquals(
+      AzureComputeProviderHelper.getShortVMName(vmNamePrefix, instanceId) + "." + fqdnSuffix,
+      azureComputeInstanceHelper.getPrivateFqdn());
+
+    // getPublicIpAddress()
+    assertNotNull(azureComputeInstanceHelper.getPublicIpAddress());
+
+    // getPublicFqdn()
+    assertNotNull(azureComputeInstanceHelper.getPublicFqdn());
+    assertEquals(
+      AzureComputeProviderHelper.getShortVMName(vmNamePrefix, instanceId) + "." +
+        TestConfigHelper.DEFAULT_TEST_REGION + "." +
+        TestConfigHelper.DEFAULT_TEST_PUBLIC_URL_POSTFIX,
+      azureComputeInstanceHelper.getPublicFqdn());
+
+    // wait a little before deleting the VM and its supporting resources.
+    Thread.sleep(10 * 1000);
+
+    LOG.info("Start delete VM {}.", vmName);
+
+    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
+      true);
+
+    helper.pollPendingTask(deleteTask, 1800, 10);
+  }
+
+  /**
+   * This test verifies VM can be created even the resource group name contains "_"
+   *
+   * @throws Exception if an exception occurs
+   */
+  @Test
+  public void createVmInResourceGroupNameWithUnderscoreTest() throws Exception {
+    ResourceGroup rg = new ResourceGroup(TestConfigHelper.DEFAULT_TEST_REGION);
+    AvailabilitySet as = new AvailabilitySet(TestConfigHelper.DEFAULT_TEST_REGION);
+    String asName = "rgas";
+    as.setName(asName);
+    String rgName = "rg_with_underscore";
+    ResourceManagementClient resourceManagementClient = ResourceManagementService.create(config);
+    resourceManagementClient.getResourceGroupsOperations().createOrUpdate(rgName, rg);
+    computeManagementClient.getAvailabilitySetsOperations().createOrUpdate(rgName, as);
+
+    context = new ResourceContext(
+      TestConfigHelper.DEFAULT_TEST_REGION,
+      rgName,
+      cred.getSubscriptionId(),
+      true);
+    setupContext(context, vmName, vnet);
+    context.setAvailabilitySetName(asName);
+    as.setId(helper.createAndSetAvailabilitySetId(context));
+
+    LOG.info("Start create vm " + vmName);
+    Future<TaskResult> vmr = helper.submitVmCreationTask(
+      context, vnet, subnet, nsg, as, vmSize, vmNamePrefix, instanceId, fqdnSuffix,
+      TestConfigHelper.DEFAULT_TEST_SSH_USERNAME, TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY,
+      2, cfgHelper.getDefaultImageInfo());
+
+    helper.pollPendingTask(vmr, 1800, 10);
+    LOG.info("VM {} is created.", vmName);
+
+    assertEquals(InstanceStatus.RUNNING, helper.getVirtualMachineStatus(rgName, vmName)
+      .getInstanceStatus());
+
+    helper.deleteResourceGroup(context);
+  }
+
+
   private ResourceContext buildContext(AzureCredentials cred, String vmName, VirtualNetwork vnet) {
     ResourceContext context = new ResourceContext(
       TestConfigHelper.DEFAULT_TEST_REGION,
@@ -360,13 +494,29 @@ public class AzureComputeProviderHelperLiveTest {
       cred.getSubscriptionId(),
       true);
 
+    setupContext(context, vmName, vnet);
+    return context;
+  }
+
+  private void setupContext(ResourceContext context, String vmName, VirtualNetwork vnet) {
     HashMap<String, String> tags = new HashMap<String, String>();
     tags.put("TestTag", "TestTagValue");
     context.setTags(tags);
     context.setVirtualNetworkName(vmName);
     context.setVirtualNetwork(vnet);
     context.setAvailabilitySetName(TestConfigHelper.DEFAULT_TEST_AVAILABILITY_SET);
+    String resourcePrefix = instanceId.substring(0,8);
+    String randomPadding = context.randomString(RESOURCE_PREFIX_LENGTH);
 
-    return context;
+    context.setStorageAccountName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+      randomPadding, "sa"));
+    context.setNetworkInterfaceName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+      randomPadding,  "nic"));
+    context.setPublicIpName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+      randomPadding,  "publicip"));
+    context.setContainerName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+      randomPadding,  "container"));
+    context.setIpConfigName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+      randomPadding,  "ipconfig"));
   }
 }

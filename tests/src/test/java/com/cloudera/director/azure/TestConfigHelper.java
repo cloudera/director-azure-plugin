@@ -46,6 +46,7 @@ public class TestConfigHelper {
   public static final String DEFAULT_TEST_HOST_FQDN_SUFFIX = "cdh-cluster.internal";
   public static final String DEFAULT_TEST_IMAGE = "cloudera-centos-6-latest";
   public static final String DEFAULT_TEST_REGION = "eastus";
+  public static final String DEFAULT_TEST_PUBLIC_URL_POSTFIX = "cloudapp.azure.com";
   public static final String DEFAULT_TEST_SSH_PRIVATE_KEY =
     "-----BEGIN RSA PRIVATE KEY-----\n" +
     "MIIEpAIBAAKCAQEAsFXRzZvk4ho1SX8xMqdP+5u5iiFNm8QkfOdDI1yDP+4ISds4\n" +

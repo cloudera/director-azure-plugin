@@ -26,6 +26,7 @@ import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.provider.AzureComputeProviderHelper;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
+import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
 import com.microsoft.windowsazure.exception.ServiceException;
 import com.typesafe.config.Config;
@@ -95,6 +96,10 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     "IMAGE '%s' config does not have all required fields. Please check plugin config file.";
   static final String COMMUNICATION_MSG =
     "Cannot communicate with Azure due to IOException while validating: '%s'.";
+  static final String ILLEGAL_ARGUMENT_EXCEPTION_MSG =
+    "IllegalArgumentException occurred while validating: '%s'. " +
+      "Please check permissions, existence, spelling, etc.";
+  static final String GENERIC_MSG = "Exception occurred during validation";
 
   /**
    * @param providerSectionPluginConfig "provider" section in the plugin config
@@ -123,18 +128,36 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
   @Override
   public void validate(String name, Configured directorConfig,
     PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
-    AzureComputeProviderHelper helper = credentials.getComputeProviderHelper();
+
+    // Local checks
     checkVMSize(directorConfig, accumulator, localizationContext);
-    checkResourceGroup(directorConfig, accumulator, localizationContext, helper);
-    checkVirtualNetworkResourceGroup(directorConfig, accumulator, localizationContext, helper);
-    checkVirtualNetwork(directorConfig, accumulator, localizationContext, helper);
-    checkSubnet(directorConfig, accumulator, localizationContext, helper);
     checkFQDNSuffix(directorConfig, accumulator, localizationContext);
-    checkNetworkSecurityGroupResourceGroup(directorConfig, accumulator, localizationContext, helper);
-    checkNetworkSecurityGroup(directorConfig, accumulator, localizationContext, helper);
-    checkAvailabilitySet(directorConfig, accumulator, localizationContext, helper);
-    checkVmImage(directorConfig, accumulator, localizationContext, helper);
     checkInstancePrefix(directorConfig, accumulator, localizationContext);
+
+    /*
+     * Azure backend checks: These checks verifies the resources specified in instance template
+     * do exist in Azure. Defensive code to catch all Exceptions thrown from Azure SDK so they
+     * can be reported properly.
+     */
+    try {
+      AzureComputeProviderHelper helper = credentials.getComputeProviderHelper();
+      checkResourceGroup(directorConfig, accumulator, localizationContext, helper);
+      checkVirtualNetworkResourceGroup(directorConfig, accumulator, localizationContext,
+        helper);
+      checkVirtualNetwork(directorConfig, accumulator, localizationContext, helper);
+      checkSubnet(directorConfig, accumulator, localizationContext, helper);
+      checkNetworkSecurityGroupResourceGroup(directorConfig, accumulator, localizationContext,
+        helper);
+      checkNetworkSecurityGroup(directorConfig, accumulator, localizationContext, helper);
+      checkAvailabilitySet(directorConfig, accumulator, localizationContext, helper);
+      checkVmImage(directorConfig, accumulator, localizationContext, helper);
+    } catch (Exception e) {
+      LOG.error(GENERIC_MSG, e);
+
+      //use null key to indicate generic error
+      ConfigurationPropertyToken token =null;
+      addError(accumulator, token, localizationContext, null, GENERIC_MSG);
+    }
   }
 
   /**
@@ -283,7 +306,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       } else {
         message = SUBNET_MSG;
       }
-      LOG.error(String.format(message, vnName, vnrgName));
+      LOG.error(String.format(message, subnetName, vnrgName));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME,
         localizationContext, null, message, subnetName, vnName);
     }
@@ -407,7 +430,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       }
       LOG.error(String.format(message, asName));
       addError(accumulator,
-        AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
+        AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
         localizationContext, null, message, asName);
     }
   }
@@ -477,12 +500,19 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
     AzureVmImageInfo imageInfo = new AzureVmImageInfo(publisher, sku, offer, version);
     try {
-      // check if the image is available in the data center specified in the location
+      /*
+       * check if the image is available in the data center specified in the location.
+       * If service principle doesn't have at least read permission at the subscription level,
+       * an IllegalArgumentException may be thrown by the SDK.
+       */
       helper.getMarketplaceVMImage(location, imageInfo);
-    } catch (ServiceException | IOException | URISyntaxException e) {
+    } catch (ServiceException | IOException | URISyntaxException |
+      IllegalArgumentException e) {
       String message;
       if (e instanceof IOException) {
         message = COMMUNICATION_MSG;
+      } else if (e instanceof IllegalArgumentException) {
+        message = ILLEGAL_ARGUMENT_EXCEPTION_MSG;
       } else {
         message = IMAGE_MISSING_IN_AZURE_MSG;
       }

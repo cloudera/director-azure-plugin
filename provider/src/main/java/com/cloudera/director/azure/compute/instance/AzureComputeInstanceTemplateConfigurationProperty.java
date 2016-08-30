@@ -31,7 +31,9 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
     .configKey(ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE.unwrap()
       .getConfigKey())
     .name("Image Alias")
-    .addValidValues("cloudera-centos-6-latest")
+    .addValidValues(
+      "cloudera-centos-6-latest",
+      "redhat-rhel-67-latest")
     .defaultDescription("The image alias from plugin configuration.")
     .defaultErrorMessage("Image alias is mandatory")
     .widget(ConfigurationProperty.Widget.OPENLIST)
@@ -44,7 +46,10 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
     .name("VirtualMachine Size")
     .addValidValues(
       "STANDARD_DS14",
-      "STANDARD_DS13")
+      "STANDARD_DS14_V2",
+      "STANDARD_DS13",
+      "STANDARD_DS13_V2",
+      "STANDARD_DS12_V2")
     .defaultDescription(
       "The machine type.<br />" +
         "<a target='_blank' href='https://azure.microsoft.com/en-us/documentation/articles/virtual-machines-linux-sizes/'>More Information</a>")

@@ -181,7 +181,7 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
     VirtualHardDisk vhardDisk = new VirtualHardDisk();
     vhardDisk.setUri(osVhduri);
     OSDisk osDisk = new OSDisk("osdisk", vhardDisk, DiskCreateOptionTypes.FROMIMAGE);
-    osDisk.setCaching(CachingTypes.NONE);
+    osDisk.setCaching(CachingTypes.READWRITE);
     sto.setOSDisk(osDisk);
     // This is a thread safe call as inputs are all local to this task
     sto.setDataDisks(computeProviderHelper.createDataDisks(

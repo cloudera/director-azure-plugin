@@ -91,7 +91,7 @@ public class CleanUpTaskTest {
     when(helper.getAvailabilitySetNameFromVm(vm)).thenReturn(asName);
     when(helper.getResourceContextFromVm(anyString(), any(VirtualMachine.class))).thenReturn(context);
 
-    CleanUpTask task = new CleanUpTask(resourceGroup, context, helper);
+    CleanUpTask task = new CleanUpTask(resourceGroup, context, helper, true);
     Future<TaskResult> future = service.submit(task);
     TaskResult result = future.get(600, TimeUnit.SECONDS);
     verify(helper).beginDeleteStorageAccountByName(anyString(), anyString());
@@ -105,7 +105,7 @@ public class CleanUpTaskTest {
     when(helper.getVirtualMachineStatus(resourceGroup, vmName)).thenReturn(new SimpleInstanceState(InstanceStatus
         .RUNNING));
     when(helper.beginDeleteVirtualMachine(resourceGroup, vm)).thenReturn(dor);
-    when(helper.beginDeleteNetworkResourcesOnVM(resourceGroup, vm)).thenReturn(or);
+    when(helper.beginDeleteNetworkResourcesOnVM(resourceGroup, vm, true)).thenReturn(or);
     when(helper.beginDeleteStorageAccountOnVM(resourceGroup, vm)).thenReturn(or);
     when(helper.getLongRunningOperationStatus(anyString())).thenReturn(clror);
     when(clror.getStatus()).thenReturn(ComputeOperationStatus.InProgress);
@@ -116,11 +116,11 @@ public class CleanUpTaskTest {
     when(helper.getAvailabilitySetNameFromVm(any(VirtualMachine.class))).thenReturn(asName);
     when(helper.getResourceContextFromVm(anyString(), any(VirtualMachine.class))).thenReturn(context);
 
-    CleanUpTask task = new CleanUpTask(resourceGroup, vm, helper);
+    CleanUpTask task = new CleanUpTask(resourceGroup, vm, helper, true);
     Future<TaskResult> future = service.submit(task);
     TaskResult result = future.get(600, TimeUnit.SECONDS);
     verify(helper).beginDeleteStorageAccountOnVM(resourceGroup, vm);
-    verify(helper).beginDeleteNetworkResourcesOnVM(resourceGroup, vm);
+    verify(helper).beginDeleteNetworkResourcesOnVM(resourceGroup, vm, true);
     assertTrue(result.isSuccessful());
   }
 }

@@ -573,15 +573,17 @@ public class AzureComputeProviderHelper {
    * Blocks until all resources specified in contexts are deletes or if deletion thread is
    * interrupted.
    *
-   * @param resourceGroup Azure resource group name
-   * @param contexts      Azure context populated during VM allocation
+   * @param resourceGroup        Azure resource group name
+   * @param contexts             Azure context populated during VM allocation
+   * @param isPublicIPConfigured was the resource provisioned with a public IP
    * @throws InterruptedException
    */
-  public void deleteResources(String resourceGroup, Collection<ResourceContext> contexts)
+  public void deleteResources(String resourceGroup, Collection<ResourceContext> contexts,
+    boolean isPublicIPConfigured)
     throws InterruptedException {
     Set<CleanUpTask> tasks = new HashSet<>();
     for (ResourceContext context : contexts) {
-      tasks.add(new CleanUpTask(resourceGroup, context, this));
+      tasks.add(new CleanUpTask(resourceGroup, context, this, isPublicIPConfigured));
     }
     service.invokeAll(tasks);
   }
@@ -629,7 +631,7 @@ public class AzureComputeProviderHelper {
   /**
    * Gets a list of all resource groups under the subscription.
    *
-   * @return a list of all resource gourps under the subscription
+   * @return a list of all resource groups under the subscription
    * @throws ServiceException
    * @throws IOException
    * @throws URISyntaxException
@@ -660,8 +662,9 @@ public class AzureComputeProviderHelper {
       .getVirtualMachines();
   }
 
-  public Future<TaskResult> submitDeleteVmTask(String resourceGroup, VirtualMachine vm) {
-    CleanUpTask toDelete = new CleanUpTask(resourceGroup, vm, this);
+  public Future<TaskResult> submitDeleteVmTask(String resourceGroup, VirtualMachine vm,
+    boolean isPublicIPConfigured) {
+    CleanUpTask toDelete = new CleanUpTask(resourceGroup, vm, this, isPublicIPConfigured);
     return service.submit(toDelete);
   }
 
@@ -721,8 +724,9 @@ public class AzureComputeProviderHelper {
    * <p>
    * NOTE: NIC must be deleted first before PublicIP can be deleted.
    *
-   * @param resourceGroup name of resource group
-   * @param vm            Azure VirtualMachine object, contains info about a particular VM
+   * @param resourceGroup        name of resource group
+   * @param vm                   Azure VirtualMachine object, contains info about a particular VM
+   * @param isPublicIPConfigured does the template define a public IP that should be cleaned up
    * @return response of the delete operations
    * @throws IOException
    * @throws ServiceException
@@ -730,7 +734,7 @@ public class AzureComputeProviderHelper {
    * @throws InterruptedException
    */
   public synchronized OperationResponse beginDeleteNetworkResourcesOnVM(String resourceGroup,
-    VirtualMachine vm)
+    VirtualMachine vm, boolean isPublicIPConfigured)
     throws IOException, ServiceException, ExecutionException, InterruptedException {
     NetworkInterfaceGetResponse networkInterfaceGetResponse = networkResourceProviderClient
       .getNetworkInterfacesOperations().get(resourceGroup, getNicNameFromVm(vm));
@@ -741,11 +745,16 @@ public class AzureComputeProviderHelper {
     OperationResponse response = networkResourceProviderClient.getNetworkInterfacesOperations()
       .delete(resourceGroup, getNicNameFromVm(vm));
 
-    if (ipConfiguration.getPublicIpAddress() != null) {
+    if (isPublicIPConfigured && ipConfiguration.getPublicIpAddress() != null) {
       String[] pipID = ipConfiguration.getPublicIpAddress().getId().split("/");
       String pipName = pipID[pipID.length - 1];
       response = networkResourceProviderClient.getPublicIpAddressesOperations().beginDeleting(
         resourceGroup, pipName);
+      LOG.debug("Begin deleting public IP address {}.", pipName);
+    } else {
+      LOG.debug("Skipping delete of public IP address: isPublicIPConfigured {}; " +
+        "ipConfiguration.getPublicIpAddress(): {}", isPublicIPConfigured,
+        ipConfiguration.getPublicIpAddress());
     }
     return response;
   }

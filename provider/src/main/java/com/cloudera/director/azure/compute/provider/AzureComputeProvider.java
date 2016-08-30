@@ -93,6 +93,10 @@ public class AzureComputeProvider
 
   private static final int TIMEOUT_SECONDS = 1800;
   private static final int POLLING_INTERVAL_SECONDS = 10;
+  private static final int RESOURCE_PREFIX_LENGTH = 8;
+
+  // Resource name template, instance-id+random+type
+  private static final String RESOURCE_NAME_TEMPLATE = "%s%s%s";
 
   private int lastSuccessfulAllocationCount = 0;
   private AzureCredentials credentials;
@@ -245,6 +249,20 @@ public class AzureComputeProvider
         // storage account
         ResourceContext context = credentials.createResourceContext(location, computeRgName, publicIpFlag);
         context.setTags(tags);
+        String resourcePrefix = instanceId.substring(0,8);
+        String randomPadding = context.randomString(RESOURCE_PREFIX_LENGTH);
+
+        context.setStorageAccountName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+          randomPadding, "sa"));
+        context.setNetworkInterfaceName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+          randomPadding,  "nic"));
+        context.setPublicIpName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+          randomPadding,  "publicip"));
+        context.setContainerName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+          randomPadding,  "container"));
+        context.setIpConfigName(String.format(RESOURCE_NAME_TEMPLATE, resourcePrefix,
+          randomPadding,  "ipconfig"));
+
         contexts.add(context);
 
         createVmTasks.add(computeProviderHelper.submitVmCreationTask(
@@ -267,7 +285,7 @@ public class AzureComputeProvider
       // Failed to reach minCount, delete all VMs and their supporting resources.
       LOG.info("Provisioned {} instances out of {}. minCount is {}. Delete all provisioned instances.",
         lastSuccessfulAllocationCount, instanceIds.size(), minCount);
-      deleteResources(computeRgName, contexts);
+      deleteResources(computeRgName, contexts, publicIpFlag);
 
       // We have less than minCount, which means the allocation has failed.
       // Therefore throw an UnrecoverableProviderException.
@@ -278,7 +296,7 @@ public class AzureComputeProvider
 
     } else if (lastSuccessfulAllocationCount < instanceIds.size()) {
       // Cleanup resources created for failed VM allocations.
-      deleteResources(computeRgName, failedContexts);
+      deleteResources(computeRgName, failedContexts, publicIpFlag);
       LOG.info("Provisioned {} instances out of {}. minCount is {}.",
         lastSuccessfulAllocationCount, instanceIds.size(), minCount);
     }
@@ -364,12 +382,14 @@ public class AzureComputeProvider
    *
    * @param resourceGroup resource group name
    * @param contexts      Azure context populated during VM allocation
+   * @param isPublicIPConfigured
    */
-  private void deleteResources(String resourceGroup, Collection<ResourceContext> contexts) {
+  private void deleteResources(String resourceGroup, Collection<ResourceContext> contexts,
+    boolean isPublicIPConfigured) {
     LOG.info("Tearing down resources within resource group: {}.", resourceGroup);
     AzureComputeProviderHelper computeProviderHelper = credentials.getComputeProviderHelper();
     try {
-      computeProviderHelper.deleteResources(resourceGroup, contexts);
+      computeProviderHelper.deleteResources(resourceGroup, contexts, isPublicIPConfigured);
     } catch (InterruptedException e) {
       String errMsg = "Resource cleanup is interrupted. There may be resources left not cleaned up."
         + " Please check Azure portal to make sure remaining resources are deleted.";
@@ -461,7 +481,10 @@ public class AzureComputeProvider
       VirtualMachine vm = prefixedNameToVmMapping.get(key);
       if (vm != null) {
         LOG.debug("Sending delete request to Azure for VM: {}.", vm.getName());
-        deleteVmTasks.add(computeProviderHelper.submitDeleteVmTask(rgName, vm));
+        deleteVmTasks.add(computeProviderHelper.submitDeleteVmTask(rgName, vm,
+          template.getConfigurationValue(PUBLIC_IP,
+            SimpleResourceTemplate.getTemplateLocalizationContext(getLocalizationContext()))
+            .equals("Yes")));
       }
     }
     // wait for VM to be deleted

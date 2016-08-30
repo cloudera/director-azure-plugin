@@ -16,6 +16,11 @@
 
 package com.cloudera.director.azure.compute.instance;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.util.ArrayList;
+import java.util.Arrays;
+
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.microsoft.azure.management.compute.models.NetworkInterfaceReference;
 import com.microsoft.azure.management.compute.models.VirtualMachine;
@@ -26,12 +31,6 @@ import com.microsoft.azure.management.network.models.NetworkInterfaceIpConfigura
 import com.microsoft.azure.management.network.models.PublicIpAddress;
 import com.microsoft.windowsazure.Configuration;
 import com.microsoft.windowsazure.exception.ServiceException;
-
-import java.io.IOException;
-import java.net.InetAddress;
-import java.util.ArrayList;
-import java.util.Arrays;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,16 +46,21 @@ public class AzureComputeInstanceHelper {
   private final String resourceGroupName;
   private final AzureCredentials cred;
   private final VirtualMachine vm;
-  private final InetAddress publicIP; // can be null if public IP is not configured
   private final InetAddress privateIP;
+  private final String privateFqdn;
+  private final InetAddress publicIP; // can be null if public IP is not configured
+  private final String publicFqdn; // can be null if public IP is not configured
 
-  public AzureComputeInstanceHelper(VirtualMachine vm, AzureCredentials cred, String resourceGroupName)
+  public AzureComputeInstanceHelper(VirtualMachine vm, AzureCredentials cred,
+    String resourceGroupName)
     throws IOException, ServiceException {
     this.cred = cred;
     this.vm = vm;
     this.resourceGroupName = resourceGroupName;
-    this.publicIP = getIpAddress(PUBLIC);
     this.privateIP = getIpAddress(PRIVATE);
+    this.privateFqdn = getFqdn(PRIVATE);
+    this.publicIP = getIpAddress(PUBLIC);
+    this.publicFqdn = getFqdn(PUBLIC);
   }
 
   public String getImageReference() {
@@ -79,37 +83,91 @@ public class AzureComputeInstanceHelper {
       LOG.error("Private IP address for VM {} is null.", vm.getName());
       throw new IllegalArgumentException("Private IP address for VM " + vm.getName() + " is null.");
     }
-    LOG.debug("Get private IP address for VM {}.", vm.getName());
+    LOG.debug("Get private IP {} address for VM {}.", privateIP, vm.getName());
     return privateIP;
   }
 
+  public String getPrivateFqdn() {
+    if (privateFqdn == null) {
+      LOG.error("Private FQDN for VM {} is null.", vm.getName());
+      throw new IllegalArgumentException("Private FQDN for VM " + vm.getName() + " is null.");
+    }
+    LOG.debug("Get private FQDN {} for VM {}.", privateFqdn, vm.getName());
+    return privateFqdn;
+  }
+
   public InetAddress getPublicIpAddress() {
-    LOG.debug("Get public IP address for VM {}.", vm.getName());
+    LOG.debug("Get public IP address {} for VM {}.", publicIP, vm.getName());
     return publicIP;
+  }
+
+  public String getPublicFqdn() {
+    LOG.debug("Get public FQDN {} for VM {}.", publicFqdn, vm.getName());
+    return publicFqdn;
+  }
+
+  private NetworkInterface getNetworkInterface(
+    NetworkResourceProviderClient networkResourceProviderClient)
+    throws IOException, ServiceException {
+    ArrayList<NetworkInterfaceReference> nics = vm.getNetworkProfile().getNetworkInterfaces();
+    // Azure plugin assumes there is only 1 NIC per VM.
+    NetworkInterfaceReference nicReference = nics.get(0);
+    String[] nicURI = nicReference.getReferenceUri().split("/");
+    NetworkInterface nic = networkResourceProviderClient.getNetworkInterfacesOperations().get(
+      resourceGroupName, nicURI[nicURI.length - 1]).getNetworkInterface();
+    LOG.debug("NIC: {}.", nic.getName());
+    return nic;
+  }
+
+  private NetworkInterfaceIpConfiguration getIpConfig(
+    NetworkResourceProviderClient networkResourceProviderClient)
+    throws IOException, ServiceException {
+    NetworkInterface nic = getNetworkInterface(networkResourceProviderClient);
+    ArrayList<NetworkInterfaceIpConfiguration> ips = nic.getIpConfigurations();
+    NetworkInterfaceIpConfiguration ipConfig = ips.get(0);
+    LOG.debug("ipConfig: {}.", ipConfig.getName());
+    return ipConfig;
+  }
+
+  private PublicIpAddress getPublicIP(NetworkInterfaceIpConfiguration ipConfig,
+    NetworkResourceProviderClient networkResourceProviderClient)
+    throws IOException, ServiceException {
+    String[] pipID = ipConfig.getPublicIpAddress().getId().split("/");
+    LOG.debug("pipID: {}.", Arrays.toString(pipID));
+    return networkResourceProviderClient.getPublicIpAddressesOperations()
+      .get(resourceGroupName, pipID[pipID.length - 1]).getPublicIpAddress();
+  }
+
+  private String getFqdn(boolean isPublic) throws IOException, ServiceException {
+    Configuration config = cred.createConfiguration();
+    NetworkResourceProviderClient networkResourceProviderClient = NetworkResourceProviderService
+      .create(config);
+
+    if (isPublic) {
+      NetworkInterfaceIpConfiguration ipConfig = getIpConfig(networkResourceProviderClient);
+      if (ipConfig.getPublicIpAddress() != null) {
+        return getPublicIP(ipConfig, networkResourceProviderClient).getDnsSettings().getFqdn();
+      } else {
+        LOG.info("Public IP is not configured for VM {}.", vm.getName());
+        return null;
+      }
+    } else {
+      // AZURE_SDK `nic.getDnsSettings().getInternalFqdn()` returns null
+      return vm.getOSProfile().getComputerName();
+    }
   }
 
   // AZURE_SDK Azure SDK does not provide an easy way to retrieve IP addresses.
   private InetAddress getIpAddress(boolean isPublic) throws IOException, ServiceException {
     Configuration config = cred.createConfiguration();
-    NetworkResourceProviderClient networkResourceProviderClient = NetworkResourceProviderService.create(config);
-    ArrayList<NetworkInterfaceReference> nics = vm.getNetworkProfile().getNetworkInterfaces();
-    //CDH deployment on Azure with one nic per VM
-    NetworkInterfaceReference nicReference = nics.get(0);
-    String[] nicURI = nicReference.getReferenceUri().split("/");
+    NetworkResourceProviderClient networkResourceProviderClient = NetworkResourceProviderService
+      .create(config);
+    NetworkInterfaceIpConfiguration ipConfig = getIpConfig(networkResourceProviderClient);
 
-    NetworkInterface nic = networkResourceProviderClient.getNetworkInterfacesOperations().get(
-      resourceGroupName, nicURI[nicURI.length - 1]).getNetworkInterface();
-    LOG.debug("NIC = {}.", nic.getName());
-    ArrayList<NetworkInterfaceIpConfiguration> ips = nic.getIpConfigurations();
-    NetworkInterfaceIpConfiguration ipConfig = ips.get(0);
-    LOG.debug("ipConfig = {}.", ipConfig.getName());
     if (isPublic) {
       if (ipConfig.getPublicIpAddress() != null) {
-        String[] pipID = ipConfig.getPublicIpAddress().getId().split("/");
-        LOG.debug("pipID = {}.", Arrays.toString(pipID));
-        PublicIpAddress pip = networkResourceProviderClient.getPublicIpAddressesOperations()
-          .get(resourceGroupName, pipID[pipID.length - 1]).getPublicIpAddress();
-        return InetAddress.getByName(pip.getIpAddress());
+        return InetAddress
+          .getByName(getPublicIP(ipConfig, networkResourceProviderClient).getIpAddress());
       } else {
         LOG.info("Public IP is not configured for VM {}.", vm.getName());
         return null;
