@@ -24,29 +24,35 @@ import com.cloudera.director.azure.utils.AzureVmImageInfo;
 import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 
 /**
  * Convenience functions for grabbing system properties / configuration for test.
  */
 public class TestConfigHelper {
   public static final String TEST_RESOURCE_GROUP_KEY = "azure.live.rg";
-  public static final String DEFAULT_TEST_RESOURCE_GROUP = "pluginUnitTestResourceGroup";
+  private static final String DEFAULT_TEST_RESOURCE_GROUP = "pluginUnitTestResourceGroup";
   public static final String DEFAULT_TEST_NETWORK_SECURITY_GROUP = "TestNsg";
   public static final String DEFAULT_TEST_AVAILABILITY_SET = "TestAs";
   public static final String DEFAULT_TEST_VMSIZE = "Standard_DS2";
+  public static final String DEFAULT_TEST_STORAGE_ACCOUNT_TYPE =
+    Configurations.AZURE_DEFAULT_STORAGE_ACCOUNT_TYPE;
   public static final String DEFAULT_TEST_DATA_DISK_COUNT = "1";
-  public static final String DEFAULT_TEST_VIRTUAL_NETWORK_RESOURCE_GROUP =
-    "pluginUnitTestResourceGroup";
+  public static final int DEFAULT_TEST_DATA_DISK_SIZE_GB =
+    Configurations.AZURE_DEFAULT_DATA_DISK_SIZE;
+  public static final int DEFAULT_AZURE_OPERATION_POLLING_TIMEOUT = 600;
   public static final String DEFAULT_TEST_VIRTUAL_NETWORK = "TestVnet";
   public static final String DEFAULT_TEST_SUBNET = "default";
-  public static final String DEFAULT_TEST_NETWORK_SECURITY_GROUP_RESOURCE_GROUP =
-    "pluginUnitTestResourceGroup";
   public static final String DEFAULT_TEST_PUBLIC_IP = "Yes";
   public static final String DEFAULT_TEST_HOST_FQDN_SUFFIX = "cdh-cluster.internal";
   public static final String DEFAULT_TEST_IMAGE = "cloudera-centos-6-latest";
   public static final String DEFAULT_TEST_REGION = "eastus";
   public static final String DEFAULT_TEST_PUBLIC_URL_POSTFIX = "cloudapp.azure.com";
+  public static final List<String> DEFAULT_TEST_V1_VM_SISES = Arrays.asList(
+    "Standard_DS1", "Standard_DS2", "Standard_DS3", "Standard_DS4", "Standard_DS11",
+    "Standard_DS12", "Standard_DS13", "Standard_DS14");
   public static final String DEFAULT_TEST_SSH_PRIVATE_KEY =
     "-----BEGIN RSA PRIVATE KEY-----\n" +
     "MIIEpAIBAAKCAQEAsFXRzZvk4ho1SX8xMqdP+5u5iiFNm8QkfOdDI1yDP+4ISds4\n" +
@@ -108,9 +114,11 @@ public class TestConfigHelper {
     providerCfgMap.put(AzureCredentialsConfiguration.CLIENT_SECRET.unwrap().getConfigKey(),
       System.getProperty(AzureCredentialsConfiguration.CLIENT_SECRET.unwrap().getConfigKey()));
 
+    testResourceGroup = System.getProperty(TEST_RESOURCE_GROUP_KEY, DEFAULT_TEST_RESOURCE_GROUP);
+
     providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
       .COMPUTE_RESOURCE_GROUP.unwrap().getConfigKey(),
-      DEFAULT_TEST_RESOURCE_GROUP);
+      testResourceGroup);
     providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
       .AVAILABILITY_SET.unwrap().getConfigKey(),
       DEFAULT_TEST_AVAILABILITY_SET);
@@ -118,11 +126,17 @@ public class TestConfigHelper {
       .VMSIZE.unwrap().getConfigKey(),
       DEFAULT_TEST_VMSIZE);
     providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
+      .STORAGE_ACCOUNT_TYPE.unwrap().getConfigKey(),
+      DEFAULT_TEST_STORAGE_ACCOUNT_TYPE);
+    providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
       .DATA_DISK_COUNT.unwrap().getConfigKey(),
       DEFAULT_TEST_DATA_DISK_COUNT);
     providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
+      .DATA_DISK_SIZE.unwrap().getConfigKey(),
+      "" + DEFAULT_TEST_DATA_DISK_SIZE_GB);
+    providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
       .VIRTUAL_NETWORK_RESOURCE_GROUP.unwrap().getConfigKey(),
-      DEFAULT_TEST_VIRTUAL_NETWORK_RESOURCE_GROUP);
+      testResourceGroup);
     providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
       .VIRTUAL_NETWORK.unwrap().getConfigKey(),
       DEFAULT_TEST_VIRTUAL_NETWORK);
@@ -131,7 +145,7 @@ public class TestConfigHelper {
       DEFAULT_TEST_SUBNET);
     providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
       .NETWORK_SECURITY_GROUP_RESOURCE_GROUP.unwrap().getConfigKey(),
-      DEFAULT_TEST_NETWORK_SECURITY_GROUP_RESOURCE_GROUP);
+      testResourceGroup);
     providerCfgMap.put(AzureComputeInstanceTemplateConfigurationProperty
       .NETWORK_SECURITY_GROUP.unwrap().getConfigKey(),
       DEFAULT_TEST_NETWORK_SECURITY_GROUP);
@@ -153,8 +167,6 @@ public class TestConfigHelper {
     providerCfgMap.put(AzureComputeProviderConfigurationProperty
       .REGION.unwrap().getConfigKey(),
       DEFAULT_TEST_REGION);
-
-    testResourceGroup = System.getProperty(TEST_RESOURCE_GROUP_KEY, DEFAULT_TEST_RESOURCE_GROUP);
 
     defaultImageInfo = new AzureVmImageInfo(
       "cloudera", "cloudera-centos-6", "CLOUDERA-CENTOS-6", "latest");
@@ -185,6 +197,9 @@ public class TestConfigHelper {
     return Boolean.parseBoolean(liveString);
   }
 
+  /**
+   * @return the resource group to be used by live tests.
+   */
   public String getTestResourceGroup() {
     return this.testResourceGroup;
   }

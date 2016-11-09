@@ -27,14 +27,18 @@ import com.cloudera.director.spi.v1.provider.util.AbstractLauncher;
 import com.typesafe.config.Config;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.Collections;
 import java.util.Locale;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Azure plugin launcher.
  */
 public class AzureLauncher extends AbstractLauncher {
+
+  private static final Logger LOG = LoggerFactory.getLogger(AzureLauncher.class);
 
   private Config azurePluginConfig = null;
   private Config configurableImages = null;
@@ -44,39 +48,35 @@ public class AzureLauncher extends AbstractLauncher {
   }
 
   /**
-   * Initializes the Azure plugin by parsing plugin config file from director config directory or
-   * classpath. The config file from director config directory will overwrite the one in classpath.
-   * Also loads the configurable images file from the same directories. The configurable images file
-   * from the director config directory will overwrite the one in classpath.
+   * Initializes the Azure plugin by parsing two sets of config files:
+   *   - azure-plugin.conf
+   *   - images.conf
+   * These config files are parsed as follows:
+   *   1. the default config files, found in this plugin's classpath, are read and parsed
+   *   2. the config values are then merged with a user-defined config file of the same name (if it
+   *       exists) located in `configurationDirectory` (the director configuration directory) with
+   *       the user-defined config overwriting the default config.
    *
    * @param configurationDirectory director configuration directory
    * @param httpProxyParameters    not used
    */
   @Override
   public void initialize(File configurationDirectory, HttpProxyParameters httpProxyParameters) {
-    File configFile = new File(configurationDirectory, Configurations.AZURE_CONFIG_FILENAME);
-    try {
-      if (configFile.canRead()) {
-        azurePluginConfig = AzurePluginConfigHelper.parseConfigFromFile(configFile);
-      } else {
-        azurePluginConfig = AzurePluginConfigHelper.parseConfigFromClasspath(Configurations.AZURE_CONFIG_FILENAME);
-      }
-      AzurePluginConfigHelper.validatePluginConfig(azurePluginConfig);
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
+    // Read in the default azure-plugin.conf and merge it with the optional user-defined
+    // azure-plugin.conf file in `configurationDirectory`, with the values in the user-defined
+    // azure-plugin.conf overriding the values of the default azure-plugin.conf
+    azurePluginConfig = AzurePluginConfigHelper.mergeConfig(
+      Configurations.AZURE_CONFIG_FILENAME,
+      configurationDirectory
+    );
 
-    File imageListFile = new File(configurationDirectory, Configurations.AZURE_CONFIGURABLE_IMAGES_FILE);
-    try {
-      if (imageListFile.canRead()) {
-        configurableImages = AzurePluginConfigHelper.parseConfigFromFile(imageListFile);
-      } else {
-        configurableImages = AzurePluginConfigHelper.parseConfigFromClasspath(
-          Configurations.AZURE_CONFIGURABLE_IMAGES_FILE);
-      }
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
+    AzurePluginConfigHelper.validatePluginConfig(azurePluginConfig);
+
+    // Repeat the process with images.conf
+    configurableImages = AzurePluginConfigHelper.mergeConfig(
+      Configurations.AZURE_CONFIGURABLE_IMAGES_FILE,
+      configurationDirectory
+    );
   }
 
   /**
@@ -95,16 +95,34 @@ public class AzureLauncher extends AbstractLauncher {
       throw new IllegalArgumentException("Cloud provider not found: " + cloudProviderId);
     }
 
+    // check timeout value, throws IllegalArgumentException if value is out of range.
+    checkBackendOperationPollingTimeoutFromConfig();
+
     LocalizationContext localizationContext = getLocalizationContext(locale);
 
     // Get Azure credentials
     AzureCredentialsProvider credsProvider = new AzureCredentialsProvider();
     AzureCredentials creds = credsProvider.createCredentials(configuration, localizationContext);
 
-    // Verify the credentials by trying to get an Azure config.
-    creds.createConfiguration();
+    if (!Configurations.getValidateCredentialsFlag(azurePluginConfig)) {
+      LOG.info("Skipping Azure credential validation with Azure backend.");
+    } else {
+      // Verify the credentials by trying to get an Azure config.
+      creds.createConfiguration();
+    }
 
     return new AzureCloudProvider(creds, azurePluginConfig, configurableImages,
       localizationContext);
+  }
+
+  private void checkBackendOperationPollingTimeoutFromConfig() {
+    int timeout = azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_PROVIDER)
+      .getInt(Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
+    int maxTimeoutValue = Configurations.TASKS_POLLING_TIMEOUT_SECONDS;
+    if (timeout < 0 || timeout > maxTimeoutValue) {
+      throw new IllegalArgumentException(
+        String.format("plugin timeout value in second must > 0 and < %d", maxTimeoutValue)
+      );
+    }
   }
 }

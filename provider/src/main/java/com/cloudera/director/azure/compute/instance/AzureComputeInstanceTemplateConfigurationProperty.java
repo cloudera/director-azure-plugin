@@ -16,11 +16,13 @@
 
 package com.cloudera.director.azure.compute.instance;
 
+import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.Property;
 import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import com.microsoft.azure.management.storage.models.AccountType;
 
 /**
  * Azure instance template configuration properties.
@@ -33,7 +35,9 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
     .name("Image Alias")
     .addValidValues(
       "cloudera-centos-6-latest",
-      "redhat-rhel-67-latest")
+      "cloudera-centos-72-latest",
+      "redhat-rhel-67-latest",
+      "redhat-rhel-72-latest")
     .defaultDescription("The image alias from plugin configuration.")
     .defaultErrorMessage("Image alias is mandatory")
     .widget(ConfigurationProperty.Widget.OPENLIST)
@@ -165,6 +169,18 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
     .required(true)
     .build()),
 
+  STORAGE_ACCOUNT_TYPE(new SimpleConfigurationPropertyBuilder()
+    .configKey("storageAccountType")
+    .name("Storage Account Type")
+    .addValidValues(
+      AccountType.PremiumLRS.toString(),
+      AccountType.StandardLRS.toString())
+    .defaultDescription("The Storage Account Type to use.")
+    .defaultValue(Configurations.AZURE_DEFAULT_STORAGE_ACCOUNT_TYPE)
+    .widget(ConfigurationProperty.Widget.OPENLIST)
+    .required(false)
+    .build()),
+
   DATA_DISK_COUNT(new SimpleConfigurationPropertyBuilder()
     .configKey("dataDiskCount")
     .name("Data Disk Count")
@@ -172,6 +188,21 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
     .defaultValue("5")
     .type(Property.Type.INTEGER)
     .widget(ConfigurationProperty.Widget.NUMBER)
+    .build()),
+
+  DATA_DISK_SIZE(new SimpleConfigurationPropertyBuilder()
+    .configKey("dataDiskSize")
+    .name("Data Disk Size in GiB")
+    .addValidValues(
+      "1023",
+      "512")
+    .defaultDescription("The size of the data disks in GiB.<br />P30: 1023GiB<br />P20: 512GiB" +
+      "<br /><a target='_blank' href='https://azure.microsoft.com/en-us/documentation/articles/" +
+      "storage-premium-storage/'>More Information</a>")
+    .defaultValue("1023")
+    .type(Property.Type.INTEGER)
+    .widget(ConfigurationProperty.Widget.OPENLIST)
+    .required(false)
     .build());
 
   /**

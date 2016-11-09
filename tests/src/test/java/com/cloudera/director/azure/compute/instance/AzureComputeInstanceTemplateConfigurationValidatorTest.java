@@ -17,6 +17,9 @@
 package com.cloudera.director.azure.compute.instance;
 
 import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE;
+import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES;
+import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES;
+import static com.cloudera.director.azure.TestConfigHelper.DEFAULT_TEST_V1_VM_SISES;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyString;
@@ -48,13 +51,19 @@ import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.AvailabilitySet;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.NetworkSecurityGroup;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.Subnet;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.VirtualMachineSize;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.VirtualMachineSizeListResponse;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.VirtualNetwork;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resources.models.ResourceGroupExtended;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.models.AccountType;
 import com.cloudera.director.azure.shaded.com.microsoft.windowsazure.exception.ServiceException;
 import com.cloudera.director.azure.shaded.com.typesafe.config.Config;
+import com.cloudera.director.azure.shaded.com.typesafe.config.ConfigFactory;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import static com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE;
 import static org.mockito.Mockito.when;
@@ -68,6 +77,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   private AzureComputeInstanceTemplateConfigurationValidator validator;
 
   private AzureComputeProviderHelper helper;
+  private VirtualMachineSizeListResponse virtualMachineSizeListResponse;
   private AzureCredentials credentials;
   private Configured defaultDirectorConfig; // config with default values
   private PluginExceptionConditionAccumulator accumulator;
@@ -78,6 +88,10 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   private String vmInvalid = "VM type '%s' is invalid (should be valid).";
   private String prefixValid = "Instance name prefix '%s' is valid (should be invalid).";
   private String prefixInvalid = "Instance name prefix '%s' is invalid (should be valid).";
+  private String storageAccountTypeValid = "Storage Account Type '%s' is valid (should be invalid)";
+  private String storageAccountTypeInvalid = "Storage Account Type '%s' is invalid (should be valid)";
+  private String sshUsernameValid = "SSH Username '%s' is valid (should be invalid).";
+  private String sshUsernameInvalid = "SSH Username '%s' is invalid (should be valid).";
   private String suffixValid = "FQDN suffix '%s' is valid (should be invalid).";
   private String suffixInvalid = "FQDN suffix '%s' is invalid (should be valid).";
   private String vnValid = "Virtual Network '%s' is valid (should be invalid)";
@@ -90,6 +104,8 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   private String asInvalid = "Availability Set '%s' is invalid (should be valid)";
   private String rgValid = "Resource Group '%s' is valid (should be invalid)";
   private String rgInvalid = "Resource Group '%s' is invalid (should be valid)";
+  private String locationValid = "Location for '%s' is valid (should be invalid)";
+  private String locationInvalid = "Location for '%s' is invalid (should be valid)";
 
   private String rgName = "resourcegroup";
   private String vnrgName = "virtualnetworkresourcegroup";
@@ -98,7 +114,9 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   private String nsgrgName = "networksecuritygroupresourcegroup";
   private String nsgName = "networksecuritygroup";
   private String asName = "availabilityset";
-  private String location = "location";
+  private String vmSize = "STANDARD_DS14";
+  private String locationEastUS = "eastus";
+  private String locationWestUS = "westus";
   private String imageName = "cloudera-centos-6-latest";
   private ResourceGroupExtended rg = mock(ResourceGroupExtended.class);
   private ResourceGroupExtended vnrg = mock(ResourceGroupExtended.class);
@@ -108,9 +126,13 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   private NetworkSecurityGroup nsg = mock(NetworkSecurityGroup.class);
   private AvailabilitySet as = mock(AvailabilitySet.class);
 
+  @Rule
+  public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
   @Before
   public void setUp() throws Exception {
     helper = mock(AzureComputeProviderHelper.class);
+    virtualMachineSizeListResponse = mock(VirtualMachineSizeListResponse.class);
     credentials = mock(AzureCredentials.class);
 
     when(credentials.getComputeProviderHelper()).thenReturn(helper);
@@ -120,14 +142,15 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
       .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE);
     localizationContext = new DefaultLocalizationContext(Locale.getDefault(), "");
     validator = new AzureComputeInstanceTemplateConfigurationValidator(
-      pluginConfig.getConfig(AZURE_CONFIG_INSTANCE), configurableImages, credentials, location);
+      pluginConfig.getConfig(AZURE_CONFIG_INSTANCE), configurableImages, credentials, locationEastUS);
+    validator = spy(validator);
     accumulator = new PluginExceptionConditionAccumulator();
 
     // Set the default values we use.
     // N.B.: some tests test changes to the default values; those tests don't use the
     // defaultDirectorConfig variable.
     Map<String, String> cfgMap = new HashMap<String, String>();
-    cfgMap.put("type", "STANDARD_DS14");
+    cfgMap.put("type", vmSize);
     cfgMap.put("hostFqdnSuffix", "cdh-cluster.internal");
     defaultDirectorConfig = spy(new SimpleConfiguration(cfgMap));
     // Always make sure that checking fields returns something so we can continue to the
@@ -136,36 +159,92 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
       .when(defaultDirectorConfig)
       .getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP, localizationContext);
+    doReturn(rg)
+      .when(helper)
+      .getResourceGroup(rgName);
+
     doReturn(vnrgName)
       .when(defaultDirectorConfig)
       .getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP,
         localizationContext);
+    doReturn(vnrg)
+      .when(helper)
+      .getResourceGroup(vnrgName);
+
     doReturn(vnName)
       .when(defaultDirectorConfig)
       .getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK, localizationContext);
+    doReturn(vn)
+      .when(helper)
+      .getVirtualNetworkByName(vnrgName, vnName);
+    doReturn(locationEastUS)
+      .when(vn)
+      .getLocation();
+
     doReturn(subnetName)
       .when(defaultDirectorConfig)
       .getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME, localizationContext);
+    doReturn(subnet)
+      .when(helper)
+      .getSubnetByName(vnrgName, vnName, subnetName);
+
     doReturn(nsgrgName)
       .when(defaultDirectorConfig)
       .getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP,
         localizationContext);
+    doReturn(nsgrg)
+      .when(helper)
+      .getResourceGroup(nsgrgName);
+
     doReturn(nsgName)
       .when(defaultDirectorConfig)
       .getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
         localizationContext);
+    doReturn(nsg)
+      .when(helper)
+      .getNetworkSecurityGroupByName(nsgrgName, nsgName);
+    doReturn(locationEastUS)
+      .when(nsg)
+      .getLocation();
+
     doReturn(asName)
         .when(defaultDirectorConfig)
         .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
           localizationContext);
+    doReturn(as)
+      .when(helper)
+      .getAvailabilitySetByName(rgName, asName);
+    doReturn(locationEastUS)
+      .when(as)
+      .getLocation();
+
+    doReturn(vmSize)
+      .when(defaultDirectorConfig)
+      .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
+        localizationContext);
+
     doReturn(imageName)
       .when(defaultDirectorConfig)
       .getConfigurationValue(IMAGE, localizationContext);
+
+    // create the list of v1 VirtualMachineSizes
+    ArrayList<VirtualMachineSize> v1VMs = new ArrayList<VirtualMachineSize>();
+    for (String s : DEFAULT_TEST_V1_VM_SISES) {
+      VirtualMachineSize vms = new VirtualMachineSize();
+      vms.setName(s);
+      v1VMs.add(vms);
+    }
+    doReturn(virtualMachineSizeListResponse)
+      .when(helper)
+      .getAvailableSizesInAS(rgName, asName);
+    doReturn(v1VMs)
+      .when(virtualMachineSizeListResponse)
+      .getVirtualMachineSizes();
   }
 
   @After
@@ -184,7 +263,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void validate_validInput_success() throws Exception {
-    AzureComputeInstanceTemplateConfigurationValidator validator = spy(this.validator);
     validator.validate(null, defaultDirectorConfig, accumulator, localizationContext);
 
     assertEquals("Something is invalid (everything should be valid).",
@@ -192,14 +270,22 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
     verify(validator, times(1))
       .checkVMSize(defaultDirectorConfig, accumulator, localizationContext);
     verify(validator, times(1))
+      .checkFQDNSuffix(defaultDirectorConfig, accumulator, localizationContext);
+    verify(validator, times(1))
       .checkInstancePrefix(defaultDirectorConfig, accumulator, localizationContext);
     verify(validator, times(1))
-      .checkFQDNSuffix(defaultDirectorConfig, accumulator, localizationContext);
+      .checkStorage(defaultDirectorConfig, accumulator, localizationContext);
+    verify(validator, times(1))
+      .checkSshUsername(defaultDirectorConfig, accumulator, localizationContext);
+    verify(validator, times(1))
+      .checkResourceGroup(defaultDirectorConfig, accumulator, localizationContext, helper);
     verify(validator, times(1))
       .checkVirtualNetworkResourceGroup(defaultDirectorConfig, accumulator, localizationContext,
         helper);
     verify(validator, times(1))
       .checkVirtualNetwork(defaultDirectorConfig, accumulator, localizationContext, helper);
+    verify(validator, times(1))
+      .checkSubnet(defaultDirectorConfig, accumulator, localizationContext, helper);
     verify(validator, times(1))
       .checkNetworkSecurityGroupResourceGroup(defaultDirectorConfig, accumulator,
         localizationContext, helper);
@@ -208,14 +294,11 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
     verify(validator, times(1))
       .checkAvailabilitySet(defaultDirectorConfig, accumulator, localizationContext, helper);
     verify(validator, times(1))
-      .checkResourceGroup(defaultDirectorConfig, accumulator, localizationContext, helper);
-    verify(validator, times(1))
       .checkVmImage(defaultDirectorConfig, accumulator, localizationContext, helper);
   }
 
   @Test
   public void validate_UnknownException() throws Exception {
-    AzureComputeInstanceTemplateConfigurationValidator validator = spy(this.validator);
     when(helper.getMarketplaceVMImage(anyString(), any(AzureVmImageInfo.class)))
       .thenThrow(new RuntimeException());
     validator.validate(null, defaultDirectorConfig, accumulator, localizationContext);
@@ -268,10 +351,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void checkResourceGroup_validInput_success() throws Exception {
-    doReturn(rg)
-      .when(helper)
-      .getResourceGroup(anyString());
-
     validator.checkResourceGroup(defaultDirectorConfig, accumulator, localizationContext, helper);
 
     assertEquals(String.format(rgInvalid, rgName), 0, accumulator.getConditionsByKey().size());
@@ -336,10 +415,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void checkVirtualNetworkResourceGroup_validInput_success() throws Exception {
-    doReturn(vnrg)
-      .when(helper)
-      .getResourceGroup(anyString());
-
     validator.checkVirtualNetworkResourceGroup(defaultDirectorConfig, accumulator,
       localizationContext, helper);
 
@@ -424,10 +499,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void checkVirtualNetwork_validInput_success() throws Exception {
-    doReturn(vn)
-      .when(helper)
-      .getVirtualNetworkByName(anyString(), anyString());
-
     validator.checkVirtualNetwork(defaultDirectorConfig, accumulator, localizationContext, helper);
 
     assertEquals(String.format(vnInvalid, vnName), 0, accumulator.getConditionsByKey().size());
@@ -443,6 +514,17 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
         localizationContext);
     verify(helper, times(1))
       .getVirtualNetworkByName(anyString(), anyString());
+    verify(vn, times(1)).getLocation();
+  }
+
+  @Test
+  public void checkVirtualNetwork_invalidLocation_error() throws Exception {
+    doReturn(locationWestUS)
+      .when(vn)
+      .getLocation();
+
+    validator.checkVirtualNetwork(defaultDirectorConfig, accumulator, localizationContext, helper);
+    assertEquals(String.format(locationValid, vnName), 1, accumulator.getConditionsByKey().size());
   }
 
   @Test
@@ -514,8 +596,13 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   @Test
   public void checkFQDNSuffix_validLengths_success() throws Exception {
     final List<String> suffixes = new ArrayList<String>() {{
-      // It can be >= 3 characters
-      add("aaa");
+      // It can be >= 1 character
+      add("a");
+      add("1");
+      add("ab");
+      add("12");
+      add("abc");
+      add("123");
 
       // It can be <= 37 characters
       add("aaaaaaaaaaaaaaaa.cdh-cluster.internal"); // 37 characters
@@ -535,10 +622,8 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   @Test
   public void checkFQDNSuffix_invalidLengths_error() throws Exception {
     final List<String> suffixes = new ArrayList<String>() {{
-      // It cannot be < 3 characters
+      // It cannot be < 1 characters
       add("");
-      add("a");
-      add("aa");
 
       // It cannot be > 37 characters
       add("aaaaaaaaaaaaaaaaa.cdh-cluster.internal"); // 38 characters
@@ -558,12 +643,23 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   @Test
   public void checkFQDNSuffix_hyphensAndNumbersAndDotsInValidPositions_success() throws Exception {
     final List<String> suffixes = new ArrayList<String>() {{
+      add("aaaa"); // only letters
+      add("1111"); // only numbers
       add("a-a"); // contains a hyphen
       add("a-----a"); // contains multiple hyphens
       add("a1a"); // contains a number
       add("a111111a"); // contains multiple numbers
+      add("1aa"); // starts with a number
+      add("a1"); // ends with a number
       add("aa1"); // ends with a number
       add("aa111111"); // ends with multiple numbers
+      add("abcde.a.abcde"); // length of 1
+      add("abcde.ab.abcde"); // length of 2
+      add("abcde.abc.abcde"); // length of 3
+      add("abcde.1.abcde"); // only numbers, length of 1
+      add("abcde.12.abcde"); // only numbers, length of 2
+      add("abcde.123.abcde"); // only numbers, length of 3
+      add("abcd.1abc.abcd"); // starts with number
       add("aaa-bbb-ccc-ddd-eee-fff-ggg-hhh-iii"); // contains lots of hyphens (-)
       add("aaa.bbb.ccc.ddd.eee.fff.ggg.hhh.iii"); // contains lots of dots (.)
       add("aaa.bb2.c3c.d44.e-e5.f--f.ggg.hhh.iii"); // contains lots of everything
@@ -586,7 +682,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
       // It can contain only lowercase letters, numbers and hyphens.
       // The first character must be a letter.
       // The last character must be a letter or number.
-      add("1abc"); // starts with number
       add("-abc"); // starts with hyphen
       add("abc-"); // ends with hyphen
       add("ABC"); // not lowercase
@@ -596,15 +691,16 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
       // Same as above, but wrapped with valid labels.
       add("abcd..abcd"); // empty
-      add("abcd.a.abcd"); // length < 3
-      add("abcd.ab.abcd"); // length < 3
-      add("abcd.1abc.abcd"); // starts with number
       add("abcd.-abc.abcd"); // starts with hyphen
       add("abcd.abc-.abcd"); // ends with hyphen
       add("abcd.ABC.abcd"); // not lowercase
       add("abcd.aBc.abcd"); // not lowercase
       add("abcd.Abc.abcd"); // not lowercase
       add("abcd.abC.abcd"); // not lowercase
+
+      // Cannot start or end with dot
+      add(".abc");
+      add("abc.");
     }};
 
     Map<String, String> cfgMap = new HashMap<String, String>();
@@ -670,10 +766,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void checkNetworkSecurityGroupResourceGroup_validInput_success() throws Exception {
-    doReturn(nsgrg)
-      .when(helper)
-      .getResourceGroup(anyString());
-
     validator.checkNetworkSecurityGroupResourceGroup(defaultDirectorConfig, accumulator,
       localizationContext, helper);
 
@@ -760,10 +852,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void checkNetworkSecurityGroup_validInput_success() throws Exception {
-    doReturn(nsg)
-      .when(helper)
-      .getNetworkSecurityGroupByName(anyString(), anyString());
-
     validator.checkNetworkSecurityGroup(defaultDirectorConfig, accumulator, localizationContext,
       helper);
 
@@ -781,6 +869,18 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
         localizationContext);
     verify(helper, times(1))
       .getNetworkSecurityGroupByName(anyString(), anyString());
+    verify(nsg, times(1)).getLocation();
+  }
+
+  @Test
+  public void checkNetworkSecurityGroup_invalidLocation_error() throws Exception {
+    doReturn(locationWestUS)
+      .when(nsg)
+      .getLocation();
+
+    validator.checkNetworkSecurityGroup(defaultDirectorConfig, accumulator, localizationContext,
+      helper);
+    assertEquals(String.format(locationValid, nsgName), 1, accumulator.getConditionsByKey().size());
   }
 
   @Test
@@ -839,10 +939,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void checkAvailabilitySet_validInput_success() throws Exception {
-    doReturn(as)
-      .when(helper)
-      .getAvailabilitySetByName(anyString(), anyString());
-
     validator.checkAvailabilitySet(defaultDirectorConfig, accumulator, localizationContext,
       helper);
 
@@ -855,9 +951,24 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
         localizationContext);
     verify(helper, times(1))
       .getAvailabilitySetByName(anyString(), anyString());
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
+        localizationContext);
+    verify(as, times(1)).getLocation();
   }
 
   @Test
+  public void checkAvailabilitySet_invalidLocation_error() throws Exception {
+    doReturn(locationWestUS)
+      .when(as)
+      .getLocation();
+
+    validator.checkAvailabilitySet(defaultDirectorConfig, accumulator, localizationContext,
+      helper);
+    assertEquals(String.format(locationValid, asName), 1, accumulator.getConditionsByKey().size());
+  }
+
+    @Test
   public void checkAvailabilitySet_invalidInput_IOException() throws Exception {
     doThrow(new IOException())
       .when(helper)
@@ -912,6 +1023,79 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
         localizationContext);
     verify(helper, times(1))
       .getAvailabilitySetByName(anyString(), anyString());
+  }
+
+  @Test
+  public void checkAvailabilitySet_invalidVMSize_invalidInput_IOException() throws Exception {
+    doThrow(new IOException())
+      .when(helper)
+      .getAvailableSizesInAS(anyString(), anyString());
+
+    validator.checkAvailabilitySet(defaultDirectorConfig, accumulator, localizationContext, helper);
+
+    assertEquals(String.format(asValid, asName), 1, accumulator.getConditionsByKey().size());
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+        localizationContext);
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
+        localizationContext);
+    verify(helper, times(1))
+      .getAvailabilitySetByName(anyString(), anyString());
+    verify(helper, times(1))
+      .getAvailableSizesInAS(anyString(), anyString());
+  }
+
+
+  @Test
+  public void checkAvailabilitySet_invalidVMSize_invalidInput_ServiceException() throws Exception {
+    doThrow(new ServiceException())
+      .when(helper)
+      .getAvailableSizesInAS(anyString(), anyString());
+
+    validator.checkAvailabilitySet(defaultDirectorConfig, accumulator, localizationContext, helper);
+
+    assertEquals(String.format(asValid, asName), 1, accumulator.getConditionsByKey().size());
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+        localizationContext);
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
+        localizationContext);
+    verify(helper, times(1))
+      .getAvailabilitySetByName(anyString(), anyString());
+    verify(helper, times(1))
+      .getAvailableSizesInAS(anyString(), anyString());
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
+        localizationContext);
+  }
+
+  @Test
+  public void checkAvailabilitySet_invalidVMSize_v2VMv1AS_error() throws Exception {
+    // v2 VM with an AS that only allows v1 VM sizes
+    doReturn("STANDARD_DS14_V2")
+      .when(defaultDirectorConfig)
+      .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
+        localizationContext);
+
+    validator.checkAvailabilitySet(defaultDirectorConfig, accumulator, localizationContext, helper);
+
+    assertEquals(String.format(asInvalid, asName), 1, accumulator.getConditionsByKey().size());
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+        localizationContext);
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
+        localizationContext);
+    verify(helper, times(1))
+      .getAvailabilitySetByName(anyString(), anyString());
+    verify(defaultDirectorConfig, times(1))
+      .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
+        localizationContext);
   }
 
   //
@@ -1094,6 +1278,192 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   }
 
   //
+  // Storage tests
+  //
+  @Test
+  public void checkStorage_validPremiumStorageAccountType_validSize_success() throws Exception {
+    Map<String, String> cfgMap = new HashMap<String, String>();
+    String storageAccountType = AccountType.PremiumLRS.toString();
+    cfgMap.put("storageAccountType", storageAccountType);
+    final List<String> diskSizes = new ArrayList<String>() {{
+      add("512");
+      add("1023");
+    }};
+
+    for (String diskSize : diskSizes) {
+      cfgMap.put("dataDiskSize", diskSize);
+
+      validator.checkStorage(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+      assertEquals(String.format(storageAccountTypeInvalid, storageAccountType), 0,
+        accumulator.getConditionsByKey().size());
+      accumulator.getConditionsByKey().clear();
+    }
+  }
+
+  @Test
+  public void checkStorage_validPremiumStorageAccountType_invalidSize_error() throws Exception {
+    Map<String, String> cfgMap = new HashMap<String, String>();
+    String storageAccountType = AccountType.PremiumLRS.toString();
+    cfgMap.put("storageAccountType", storageAccountType);
+    final List<String> diskSizes = new ArrayList<String>() {{
+      add("-1");
+      add("0");
+      add("511");
+      add("513");
+      add("1024");
+      add("2048");
+    }};
+
+    for (String diskSize : diskSizes) {
+      cfgMap.put("dataDiskSize", diskSize);
+
+      validator.checkStorage(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+      assertEquals(String.format(storageAccountTypeInvalid, storageAccountType), 1,
+        accumulator.getConditionsByKey().size());
+      accumulator.getConditionsByKey().clear();
+    }
+  }
+
+  @Test
+  public void checkStorage_validStandardStorageAccountType_validSize_success() throws Exception {
+    Map<String, String> cfgMap = new HashMap<String, String>();
+    String storageAccountType = AccountType.StandardLRS.toString();
+    cfgMap.put("storageAccountType", storageAccountType);
+    final List<String> diskSizes = new ArrayList<String>() {{
+      add("1");
+      add("512");
+      add("1023");
+    }};
+
+    for (String diskSize : diskSizes) {
+      cfgMap.put("dataDiskSize", diskSize);
+
+      validator.checkStorage(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+      assertEquals(String.format(storageAccountTypeInvalid, storageAccountType), 0,
+        accumulator.getConditionsByKey().size());
+      accumulator.getConditionsByKey().clear();
+    }
+  }
+
+  @Test
+  public void checkStorage_validStandardStorageAccountType_invalidSize_error() throws Exception {
+    Map<String, String> cfgMap = new HashMap<String, String>();
+    String storageAccountType = AccountType.StandardLRS.toString();
+    cfgMap.put("storageAccountType", storageAccountType);
+    final List<String> diskSizes = new ArrayList<String>() {{
+      add("-1");
+      add("0");
+      add("1024");
+      add("2048");
+    }};
+    for (String diskSize : diskSizes) {
+      cfgMap.put("dataDiskSize", diskSize);
+
+      validator.checkStorage(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+      assertEquals(String.format(storageAccountTypeValid, storageAccountType), 1,
+        accumulator.getConditionsByKey().size());
+      accumulator.getConditionsByKey().clear();
+    }
+  }
+
+  @Test
+  public void checkStorage_invalidStorageAccountType_validSize_error()
+    throws Exception {
+    Map<String, String> cfgMap = new HashMap<String, String>();
+    String storageAccountType = AccountType.StandardRAGRS.toString();
+    cfgMap.put("storageAccountType", storageAccountType);
+    cfgMap.put("dataDiskSize", "512");
+
+    validator.checkStorage(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+    // only 1 error because we don't validate sizes on storage account types not in the default list
+    assertEquals(String.format(storageAccountTypeValid, storageAccountType), 1,
+      accumulator.getConditionsByKey().size());
+    accumulator.getConditionsByKey().clear();
+  }
+
+  @Test
+  public void checkStorage_nonDefaultStorageAccountType_anySize_success() throws Exception {
+    // build a custom config with only the storage accounts to test
+    final List<String> accountTypeConfig = new ArrayList<String>() {{
+      add(AccountType.PremiumLRS.toString());
+      add(AccountType.StandardLRS.toString());
+      add(AccountType.StandardRAGRS.toString());
+    }};
+    Map<String, Map> config = new HashMap<String, Map>();
+    config.put(AZURE_CONFIG_INSTANCE, new HashMap<String, List<String>>());
+    config.get(AZURE_CONFIG_INSTANCE).put(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES, accountTypeConfig);
+    pluginConfig = ConfigFactory.parseMap(config);
+
+    validator = new AzureComputeInstanceTemplateConfigurationValidator(
+      pluginConfig.getConfig(AZURE_CONFIG_INSTANCE), configurableImages, credentials,
+      locationEastUS);
+    validator = spy(validator);
+
+    // do the test
+    Map<String, String> cfgMap = new HashMap<String, String>();
+    String storageAccountType = AccountType.StandardRAGRS.toString();
+    cfgMap.put("storageAccountType", storageAccountType);
+    final List<String> diskSizes = new ArrayList<String>() {{
+      add("0");
+      add("1");
+      add("512");
+      add("1023");
+      add("1024");
+      add("2048");
+    }};
+
+    for (String diskSize : diskSizes) {
+      cfgMap.put("dataDiskSize", diskSize);
+
+      validator.checkStorage(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+      assertEquals(String.format(storageAccountTypeInvalid, storageAccountType), 0,
+        accumulator.getConditionsByKey().size());
+      accumulator.getConditionsByKey().clear();
+    }
+  }
+
+  @Test
+  public void checkStorage_nonexistentStorageAccountType_error() throws Exception {
+    Map<String, String> cfgMap = new HashMap<String, String>();
+    String storageAccountType = "this_is_not_a_storage_account_type";
+    cfgMap.put("storageAccountType", storageAccountType);
+
+    validator.checkStorage(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+    assertEquals(String.format(storageAccountTypeValid, storageAccountType), 1,
+      accumulator.getConditionsByKey().size());
+    accumulator.getConditionsByKey().clear();
+  }
+
+  //
+  // SSH Username tests
+  //
+
+  @Test
+  public void checkSSHUsername_validUsername_success() throws Exception {
+    Map<String, String> cfgMap = new HashMap<String, String>();
+    String allowedUsername = "cloudera";
+    cfgMap.put("sshUsername", allowedUsername);
+    validator.checkSshUsername(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+    assertEquals(String.format(sshUsernameInvalid, allowedUsername), 0,
+      accumulator.getConditionsByKey().size());
+    accumulator.getConditionsByKey().clear();
+  }
+
+  @Test
+  public void checkSSHUsername_disallowedUsername_error() throws Exception {
+    Map<String, String> cfgMap = new HashMap<String, String>();
+
+    for (String disallowedUsername : pluginConfig.getConfig(Configurations.AZURE_CONFIG_INSTANCE)
+      .getStringList(AZURE_CONFIG_DISALLOWED_USERNAMES)) {
+      cfgMap.put("sshUsername", disallowedUsername);
+      validator.checkSshUsername(new SimpleConfiguration(cfgMap), accumulator, localizationContext);
+      assertEquals(String.format(sshUsernameValid, disallowedUsername), 1,
+        accumulator.getConditionsByKey().size());
+      accumulator.getConditionsByKey().clear();
+    }
+  }
+
+  //
   // VM image tests
   //
 
@@ -1140,11 +1510,8 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void checkSubnet_validInput_Success() throws Exception {
-    doReturn(subnet)
-      .when(helper)
-      .getSubnetByName(anyString(), anyString(), anyString());
-
     validator.checkSubnet(defaultDirectorConfig, accumulator, localizationContext, helper);
+
     assertEquals(String.format(subnetValid, subnetName), 0,
       accumulator.getConditionsByKey().size());
     verify(defaultDirectorConfig, times(1))

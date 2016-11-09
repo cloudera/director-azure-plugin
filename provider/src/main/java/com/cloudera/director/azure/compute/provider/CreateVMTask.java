@@ -18,6 +18,7 @@ package com.cloudera.director.azure.compute.provider;
 
 import com.cloudera.director.azure.compute.instance.TaskResult;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
+import com.cloudera.director.azure.utils.VmCreationParameters;
 import com.microsoft.azure.management.compute.models.AvailabilitySet;
 import com.microsoft.azure.management.compute.models.AvailabilitySetReference;
 import com.microsoft.azure.management.compute.models.CachingTypes;
@@ -38,6 +39,7 @@ import com.microsoft.azure.management.compute.models.VirtualMachineImage;
 import com.microsoft.azure.management.network.models.NetworkSecurityGroup;
 import com.microsoft.azure.management.network.models.Subnet;
 import com.microsoft.azure.management.network.models.VirtualNetwork;
+import com.microsoft.azure.management.storage.models.AccountType;
 import com.microsoft.azure.utility.ComputeHelper;
 import com.microsoft.azure.utility.ResourceContext;
 
@@ -67,34 +69,39 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
   private String adminName;
   private String sshPublicKey;
   private Subnet subnet;
+  private AccountType storageAccountType;
   private int dataDiskCount;
+  private int dataDiskSizeGiB;
   private AzureVmImageInfo imageInfo;
 
   private static final Logger LOG = LoggerFactory.getLogger(CreateVMTask.class);
   private DateTime startTime;
+  private int azureOperationPollingTimeout;
+
 
   // N.B.: `vmName` is composed of the user defined vm name prefix from the director template
   // and the instance id (a UUID) supplied by director
-  public CreateVMTask(ResourceContext context, VirtualNetwork vnet, Subnet subnet,
-    NetworkSecurityGroup nsg, AvailabilitySet as, String vmSize, String vmNamePrefix,
-    String instanceId, String fqdnSuffix, String adminName, String sshPublicKey, int dataDiskCount,
-    AzureVmImageInfo imageInfo, AzureComputeProviderHelper computeProviderHelper) {
+  public CreateVMTask(ResourceContext context, VmCreationParameters parameters,
+    int azureOperationPollingTimeout, AzureComputeProviderHelper computeProviderHelper) {
     this.context = context;
-    this.vnet = vnet;
-    this.nsg = nsg;
-    this.as = as;
-    this.vmSize = vmSize;
+    this.vnet = parameters.getVnet();
+    this.nsg = parameters.getNsg();
+    this.as = parameters.getAvailabilitySet();
+    this.vmSize = parameters.getVmSize();
+    this.vmNamePrefix = parameters.getVmNamePrefix();
+    this.instanceId = parameters.getInstanceId();
     this.vmName = vmNamePrefix + "-" + instanceId;
-    this.vmNamePrefix = vmNamePrefix;
-    this.instanceId = instanceId;
-    this.fqdnSuffix = fqdnSuffix;
-    this.adminName = adminName;
-    this.sshPublicKey = sshPublicKey;
-    this.dataDiskCount = dataDiskCount;
-    this.imageInfo = imageInfo;
+    this.fqdnSuffix = parameters.getFqdnSuffix();
+    this.adminName = parameters.getAdminName();
+    this.sshPublicKey = parameters.getSshPublicKey();
+    this.storageAccountType = parameters.getStorageAccountType();
+    this.dataDiskCount = parameters.getDataDiskCount();
+    this.dataDiskSizeGiB = parameters.getDataDiskSizeGiB();
+    this.imageInfo = parameters.getImageInfo();
     this.computeProviderHelper = computeProviderHelper;
     this.startTime = DateTime.now();
-    this.subnet = subnet;
+    this.subnet = parameters.getSubnet();
+    this.azureOperationPollingTimeout = azureOperationPollingTimeout;
   }
 
   /**
@@ -108,9 +115,9 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
    */
   private void requestResources() throws Exception {
     // AZURE_SDK Azure SDK API StorageHelper#createStorageAccount throws generic Exception
-    computeProviderHelper.createAndSetStorageAccount(context);
-    LOG.info("Created StorageAccount: {}, for VM {}.", context.getStorageAccountName(), vmName);
-
+    computeProviderHelper.createAndSetStorageAccount(storageAccountType, context);
+    LOG.info("Created StorageAccount: {}, type {}, for VM {}.", context.getStorageAccountName(),
+      storageAccountType, vmName);
 
     // AZURE_SDK Azure SDK API NetworkHelper throws generic Exception
     context.setVirtualNetwork(vnet);
@@ -185,7 +192,7 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
     sto.setOSDisk(osDisk);
     // This is a thread safe call as inputs are all local to this task
     sto.setDataDisks(computeProviderHelper.createDataDisks(
-      dataDiskCount, AzureComputeProviderHelper.SIZE_IN_GB, vhdContainer));
+      dataDiskCount, dataDiskSizeGiB, vhdContainer));
 
     vm.setStorageProfile(sto);
 
@@ -215,6 +222,8 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
     if (context.isCreatePublicIpAddress()) {
       computeProviderHelper.setPublicDNSInfo(context, vmShortName);
     }
+
+    LOG.info("Successfully requested resources for VM {}.", vmName);
   }
 
   public TaskResult call() {
@@ -233,16 +242,16 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
 
     try {
       String vmName = context.getVMInput().getName();
-      successCount = pollPendingOperation(op, defaultTimeoutInSec, defaultSleepIntervalInSec,
+      successCount = pollPendingOperation(op, azureOperationPollingTimeout, defaultSleepIntervalInSec,
         LOG, vmName);
     } catch (InterruptedException e) {
       LOG.info("VM {} creation is interrupted.", vmName, e);
       return new TaskResult(false, this.context);
     }
 
-    if (successCount == 1) {
-      LOG.info("VM provisioning succeeded.");
+    long timeSeconds = (DateTime.now().getMillis() - startTime.getMillis()) / 1000;
 
+    if (successCount == 1) {
       /* FIXME temporarily disable VM script runner to speed up VM deployment.
       int scriptSuccessCount = pollPendingOperation(computeProviderHelper.createCustomizedScript(context),
           defaultTimeoutInSec, defaultSleepIntervalInSec, LOG);
@@ -253,8 +262,9 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
       */
 
       success = true;
-      long timeSeconds = (DateTime.now().getMillis() - startTime.getMillis()) / 1000;
-      LOG.info("Creation of VM {} took {} seconds.", context.getVMInput().getName(), timeSeconds);
+      LOG.info("Creation of VM {} succeeded after {} seconds.", vmName, timeSeconds);
+    } else {
+      LOG.error("Creation of VM {} failed after {} seconds.", vmName, timeSeconds);
     }
 
     return new TaskResult(success, this.context);

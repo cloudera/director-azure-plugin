@@ -38,6 +38,7 @@ import com.cloudera.director.azure.compute.instance.AzureComputeInstanceHelper;
 import com.cloudera.director.azure.compute.instance.TaskResult;
 import com.cloudera.director.azure.utils.AzureVirtualMachineState;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
+import com.cloudera.director.azure.utils.VmCreationParameters;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.InstanceStatus;
 import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
@@ -66,6 +67,7 @@ import com.microsoft.azure.management.compute.models.VirtualMachineCreateOrUpdat
 import com.microsoft.azure.management.compute.models.VirtualMachineExtension;
 import com.microsoft.azure.management.compute.models.VirtualMachineImage;
 import com.microsoft.azure.management.compute.models.VirtualMachineImageGetParameters;
+import com.microsoft.azure.management.compute.models.VirtualMachineSizeListResponse;
 import com.microsoft.azure.management.network.NetworkResourceProviderClient;
 import com.microsoft.azure.management.network.NetworkResourceProviderService;
 import com.microsoft.azure.management.network.models.AzureAsyncOperationResponse;
@@ -122,8 +124,6 @@ public class AzureComputeProviderHelper {
   private static final String PUBLIC_URL_POSTFIX = ".cloudapp.azure.com";
   private static final int THREAD_POOL_SHUTDOWN_WAIT_TIME_SECONDS = 30;
 
-  public static final int SIZE_IN_GB = 1023;
-
   public AzureComputeProviderHelper(Configuration azureConfig) {
     this.resourceManagementClient = ResourceManagementService.create(azureConfig);
     this.storageManagementClient = StorageManagementService.create(azureConfig);
@@ -142,30 +142,18 @@ public class AzureComputeProviderHelper {
    * <p/>
    * This function makes multiple calls to Azure backend.
    *
-   * @param context       Azure resource context. Stores detailed info of VM supporting resources
-   *                      when the function returns
-   * @param vnet          VirtualNetwork already created in Azure
-   * @param subnet        Subnet to use under the Virtual Network
-   * @param nsg           NetworkSecurityGroup already created in Azure
-   * @param as            AvailabilitySet already created in Azure
-   * @param vmSize        VM size (Azure instance type)
-   * @param vmNamePrefix  User inputted VM name prefix
-   * @param instanceId    UUID as a string
-   * @param fqdnSuffix    custom FQDN suffix (DNS domain)
-   * @param adminName     admin user name
-   * @param sshPublicKey  admin user SSH private key
-   * @param dataDiskCount data disk count
-   * @param imageInfo     info to get the OS image for the vm
+   * @param context                      Azure resource context. Stores detailed info of VM
+   *                                     supporting resources when the function returns
+   * @param parameters                   contains additional parameters used for VM creation
+   *                                     that is not in the Azure resource context
+   * @param azureOperationPollingTimeout Azure operation polling timeout specified in second
    * @return A future of CreateVMTask
    */
   public Future<TaskResult> submitVmCreationTask(
-    ResourceContext context, VirtualNetwork vnet, Subnet subnet, NetworkSecurityGroup nsg,
-    AvailabilitySet as, String vmSize, String vmNamePrefix, String instanceId, String fqdnSuffix,
-    String adminName, String sshPublicKey, int dataDiskCount, AzureVmImageInfo imageInfo) {
+    ResourceContext context, VmCreationParameters parameters, int azureOperationPollingTimeout) {
 
     // Create a task to request resources and create VM
-    CreateVMTask task = new CreateVMTask(context, vnet, subnet, nsg, as, vmSize, vmNamePrefix,
-      instanceId, fqdnSuffix, adminName, sshPublicKey, dataDiskCount, imageInfo, this);
+    CreateVMTask task = new CreateVMTask(context, parameters, azureOperationPollingTimeout, this);
 
     return service.submit(task);
   }
@@ -308,7 +296,7 @@ public class AzureComputeProviderHelper {
 
   protected synchronized VirtualMachineCreateOrUpdateResponse submitVmCreationOp(
     ResourceContext context) throws ServiceException, IOException, URISyntaxException {
-    LOG.debug("Creating vm: {}.", context.getVMInput().getName());
+    LOG.info("Begin creating VM: {}.", context.getVMInput().getName());
     return computeManagementClient.getVirtualMachinesOperations()
       .beginCreatingOrUpdating(
         context.getResourceGroupName(),
@@ -470,14 +458,15 @@ public class AzureComputeProviderHelper {
   /**
    * Creates a premium StorageAccount for the VM.
    *
+   * @param storageAccountType type of storage account to create
    * @param context Azure ResourceContext
    * @return StorageAccount resource created in Azure
    * @throws Exception
    */
-  public synchronized StorageAccount createAndSetStorageAccount(ResourceContext context)
-    throws Exception {
-    StorageAccountCreateParameters stoInput = new StorageAccountCreateParameters(
-      AccountType.PremiumLRS, context.getLocation());
+  public synchronized StorageAccount createAndSetStorageAccount(AccountType storageAccountType,
+    ResourceContext context) throws Exception {
+    StorageAccountCreateParameters stoInput = new StorageAccountCreateParameters(storageAccountType,
+      context.getLocation());
     // AZURE_SDK StorageHelper.createStorageAccount() throws generic Exception.
     StorageAccount sa = StorageHelper.createStorageAccount(
       storageManagementClient, context, stoInput);
@@ -573,17 +562,19 @@ public class AzureComputeProviderHelper {
    * Blocks until all resources specified in contexts are deletes or if deletion thread is
    * interrupted.
    *
-   * @param resourceGroup        Azure resource group name
-   * @param contexts             Azure context populated during VM allocation
-   * @param isPublicIPConfigured was the resource provisioned with a public IP
+   * @param resourceGroup                Azure resource group name
+   * @param contexts                     Azure context populated during VM allocation
+   * @param isPublicIPConfigured         was the resource provisioned with a public IP
+   * @param azureOperationPollingTimeout Azure operation polling timeout specified in second
    * @throws InterruptedException
    */
   public void deleteResources(String resourceGroup, Collection<ResourceContext> contexts,
-    boolean isPublicIPConfigured)
+    boolean isPublicIPConfigured, int azureOperationPollingTimeout)
     throws InterruptedException {
     Set<CleanUpTask> tasks = new HashSet<>();
     for (ResourceContext context : contexts) {
-      tasks.add(new CleanUpTask(resourceGroup, context, this, isPublicIPConfigured));
+      tasks.add(new CleanUpTask(resourceGroup, context, this, isPublicIPConfigured,
+        azureOperationPollingTimeout));
     }
     service.invokeAll(tasks);
   }
@@ -663,8 +654,9 @@ public class AzureComputeProviderHelper {
   }
 
   public Future<TaskResult> submitDeleteVmTask(String resourceGroup, VirtualMachine vm,
-    boolean isPublicIPConfigured) {
-    CleanUpTask toDelete = new CleanUpTask(resourceGroup, vm, this, isPublicIPConfigured);
+    boolean isPublicIPConfigured, int azureOperationPollingTimeout) {
+    CleanUpTask toDelete = new CleanUpTask(resourceGroup, vm, this, isPublicIPConfigured,
+      azureOperationPollingTimeout);
     return service.submit(toDelete);
   }
 
@@ -830,7 +822,7 @@ public class AzureComputeProviderHelper {
 
   /**
    * Poll pending tasks till all tasks are complete or timeout.
-   * Azure platform operation can take minutes up to 2 hours.
+   * Azure platform operation can range from minutes to one hour.
    *
    * @param tasks            set of submitted tasks
    * @param durationInSecond overall timeout period
@@ -983,6 +975,25 @@ public class AzureComputeProviderHelper {
     throws IOException, ServiceException, URISyntaxException {
     return computeManagementClient.getAvailabilitySetsOperations().get(
       resourceGroup, availabilitySetName).getAvailabilitySet();
+  }
+
+  /**
+   * Grab the list of Azure VM sizes that can be deployed into the Availability Set. This list
+   * depends on what is already in the AS and can change as VMs are added or deleted. I.e. since
+   * different versions of the same VM size (e.g. v2 vs. non-v2) cannot coexist in the same AS all
+   * VMs of a specific size need to be deleted from the AS before VMs of an incompatible size can be
+   * added.
+   *
+   * @param resourceGroupName   name of resource group
+   * @param availabilitySetName name of availability set
+   * @return                    list of VM sizes that can be deployed into the availability set
+   * @throws IOException        when there is a network communication error
+   * @throws ServiceException   when resource group and/or availability set does not exist
+   */
+  public synchronized VirtualMachineSizeListResponse getAvailableSizesInAS(String resourceGroupName,
+    String availabilitySetName) throws IOException, ServiceException {
+    return computeManagementClient.getAvailabilitySetsOperations()
+      .listAvailableSizes(resourceGroupName, availabilitySetName);
   }
 
   /**

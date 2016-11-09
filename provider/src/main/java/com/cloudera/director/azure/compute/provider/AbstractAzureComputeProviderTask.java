@@ -25,8 +25,6 @@ import com.microsoft.azure.management.compute.models.ComputeOperationStatus;
 import com.microsoft.windowsazure.exception.ServiceException;
 
 import java.io.IOException;
-import java.util.HashSet;
-import java.util.Set;
 
 import org.slf4j.Logger;
 
@@ -36,53 +34,43 @@ import org.slf4j.Logger;
 public abstract class AbstractAzureComputeProviderTask {
   protected AzureComputeProviderHelper computeProviderHelper = null;
   protected int defaultSleepIntervalInSec = 10; //10 second
-  protected int defaultTimeoutInSec = 1200; //20 minutes
 
-  protected int pollPendingOperations(Set<ComputeOperationResponse> vmOperations, int durationInSecond, int
-    intervalinSecond, Logger log, String operationTarget) throws InterruptedException {
-    Set<ComputeOperationResponse> responses = new HashSet<ComputeOperationResponse>(vmOperations);
+  protected int pollPendingOperation(ComputeOperationResponse vmOperation, int durationInSecond,
+    int intervalinSecond, Logger log, String operationTarget) throws InterruptedException {
     int succeededCount = 0;
     int timerInMilliSec = durationInSecond * 1000;
     int intervalInMilliSec = intervalinSecond * 1000;
-    while (timerInMilliSec > 0 && responses.size() > 0) {
-      Set<ComputeOperationResponse> dones = new HashSet<ComputeOperationResponse>();
-      for (ComputeOperationResponse response : responses) {
-        try {
-          ComputeLongRunningOperationResponse lroResponse = computeProviderHelper.getLongRunningOperationStatus(
-            response.getAzureAsyncOperation());
-          ComputeOperationStatus status = lroResponse.getStatus();
-          log.debug("Operation (id = {}) status is {}.", response.getRequestId(), status);
-          if (!status.equals(InProgress)) {
-            dones.add(response);
-          }
-          if (status.equals(Succeeded)) {
-            succeededCount++;
-            //additional cleanup for delete operation go here?
-          }
-        } catch (IOException | ServiceException e) {
-          // FIXME Extend TaskResult class to record errors occured during create/delete tasks.
-          log.error("Encountered error while polling for Azure long running operations: ", e);
-          dones.add(response);
+    String operationId = vmOperation.getRequestId();
+    while (timerInMilliSec > 0 ) {
+      try {
+        ComputeLongRunningOperationResponse lroResponse =
+          computeProviderHelper.getLongRunningOperationStatus(
+            vmOperation.getAzureAsyncOperation());
+        ComputeOperationStatus status = lroResponse.getStatus();
+        log.debug("Operation (id = {}) status is {}.", operationId, status);
+        if (status.equals(Succeeded)) {
+          succeededCount++;
+          break;
+          //additional cleanup for delete operation go here?
+        } else if (!status.equals(InProgress)) {
+          log.error("Operation (id = {}) is {}.", operationId, status.toString());
+          break;
         }
+      } catch (IOException | ServiceException e) {
+        // FIXME Extend TaskResult class to record errors occurred during create/delete tasks.
+        log.error("Encountered error while polling for Azure long running operations: ", e);
       }
-
-      responses.removeAll(dones);
       Thread.sleep(intervalInMilliSec);
       timerInMilliSec = timerInMilliSec - intervalInMilliSec;
-      log.debug("{} Polling pending operations: remaining time = {} seconds.", operationTarget,
+      log.debug("{} Polling pending operation: remaining time = {} seconds.", operationTarget,
         timerInMilliSec / 1000 );
     }
 
-    log.debug("{} Done polling pending operations.", operationTarget);
+    if (timerInMilliSec <= 0) {
+      log.error("Azure operation (id = {} ) for {} didn't finish in allowed time.", operationId,
+        operationTarget);
+    }
+    log.debug("{} Done polling pending operation.", operationTarget);
     return succeededCount;
-  }
-
-  protected int pollPendingOperation(ComputeOperationResponse vmOperation, int durationInSecond,
-    int intervalinSecond, Logger log, String operationTarget)
-    throws InterruptedException {
-    Set<ComputeOperationResponse> operations = new HashSet();
-    operations.add(vmOperation);
-    return pollPendingOperations(operations, durationInSecond, intervalinSecond, log,
-      operationTarget);
   }
 }

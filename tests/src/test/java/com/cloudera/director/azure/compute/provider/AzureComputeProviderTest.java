@@ -16,14 +16,17 @@
 
 package com.cloudera.director.azure.compute.provider;
 
+import static com.cloudera.director.azure.Configurations.AZURE_DEFAULT_DATA_DISK_SIZE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT;
+import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.IMAGE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP;
+import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.STORAGE_ACCOUNT_TYPE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP;
@@ -54,16 +57,19 @@ import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceHelper;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
+import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationValidator;
 import com.cloudera.director.azure.compute.instance.TaskResult;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.azure.utils.AzureVirtualMachineState;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
+import com.cloudera.director.azure.utils.VmCreationParameters;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.InstanceStatus;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
+import com.cloudera.director.spi.v1.model.util.DefaultConfigurationValidator;
 import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
 import com.cloudera.director.spi.v1.model.util.SimpleInstanceState;
@@ -81,6 +87,7 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.Subnet;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.VirtualNetwork;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resources.models.ResourceGroupExtended;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.models.AccountType;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.models.StorageAccount;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.utility.ResourceContext;
 import com.cloudera.director.azure.shaded.com.microsoft.windowsazure.Configuration;
@@ -91,11 +98,17 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.powermock.api.mockito.PowerMockito;
+import org.powermock.core.classloader.annotations.PrepareForTest;
+import org.powermock.modules.junit4.PowerMockRunner;
 
 /**
  * Mock tests for AzureComputeProvider
  */
+@RunWith(PowerMockRunner.class)
+@PrepareForTest(Configurations.class)
 public class AzureComputeProviderTest {
 
   private AzureComputeProvider computeProvider;
@@ -115,7 +128,10 @@ public class AzureComputeProviderTest {
   private String location = "location";
   private String resourceGroup = "resourcegroup";
   private String publicKey = "publickey";
+  private AccountType storageAccountType =
+    AccountType.valueOf(Configurations.AZURE_DEFAULT_STORAGE_ACCOUNT_TYPE);
   private int dataDiskCount = 5;
+  private int dataDiskSizeGiB = AZURE_DEFAULT_DATA_DISK_SIZE;
   private Future response = mock(Future.class);
   private VirtualNetwork vnet = mock(VirtualNetwork.class);
   private Subnet subnet = mock(Subnet.class);
@@ -138,11 +154,14 @@ public class AzureComputeProviderTest {
     new AzureVmImageInfo("cloudera", "CLOUDERA-CENTOS-6", "cloudera-centos-6", "latest");
   private static final DefaultLocalizationContext DEFAULT_LOCALIZATION_CONTEXT =
     new DefaultLocalizationContext(Locale.getDefault(), "");
+  private VmCreationParameters parameters;
+  private int azureOperationPollingTimeout;
   @Rule
   public ExpectedException thrown = ExpectedException.none();
 
   @Before
   public void setUp() throws Exception {
+    PowerMockito.mockStatic(Configurations.class);
     configuration = mock(Configured.class);
     credentials = mock(AzureCredentials.class);
     context = mock(ResourceContext.class);
@@ -156,6 +175,7 @@ public class AzureComputeProviderTest {
       Configurations.AZURE_CONFIGURABLE_IMAGES_FILE);
     computeProvider = new AzureComputeProvider(configuration, credentials, pluginConfig,
       configurableImages, localizationContext);
+    azureOperationPollingTimeout = computeProvider.azureOperationPollingTimeout;
 
     when(credentials.getSubscriptionId()).thenReturn("subscription");
     when(credentials.createConfiguration()).thenReturn(mock(Configuration.class));
@@ -191,7 +211,10 @@ public class AzureComputeProviderTest {
     templateCfgMap.put(NETWORK_SECURITY_GROUP.unwrap().getConfigKey(), nsgName);
     templateCfgMap.put(PUBLIC_IP.unwrap().getConfigKey(), "Yes");
     templateCfgMap.put(AVAILABILITY_SET.unwrap().getConfigKey(), availabilitySet);
+    templateCfgMap.put(STORAGE_ACCOUNT_TYPE.unwrap().getConfigKey(),
+      Configurations.AZURE_DEFAULT_STORAGE_ACCOUNT_TYPE);
     templateCfgMap.put(DATA_DISK_COUNT.unwrap().getConfigKey(), ("" + dataDiskCount));
+    templateCfgMap.put(DATA_DISK_SIZE.unwrap().getConfigKey(), ("" + dataDiskSizeGiB));
     templateCfgMap.put(SSH_USERNAME.unwrap().getConfigKey(), userName);
     templateCfgMap.put(SSH_OPENSSH_PUBLIC_KEY.unwrap().getConfigKey(), publicKey);
 
@@ -201,6 +224,9 @@ public class AzureComputeProviderTest {
     SimpleConfiguration templateConfig = new SimpleConfiguration(templateCfgMap);
     template = new AzureComputeInstanceTemplate(
       "TestInstanceTemplate", templateConfig, tags, DEFAULT_LOCALIZATION_CONTEXT);
+    parameters = new VmCreationParameters(vnet, subnet, nsg, as, vmSize,
+      vmNamePrefix, instanceId, privateDomainName, userName, publicKey, storageAccountType,
+      dataDiskCount, dataDiskSizeGiB, imageInfo);
   }
 
   @After
@@ -262,7 +288,8 @@ public class AzureComputeProviderTest {
     Future<TaskResult> task = mock(Future.class);
     when(task.isDone()).thenReturn(true);
     when(task.get()).thenReturn(new TaskResult(true, null));
-    when(computeProviderHelper.submitDeleteVmTask(resourceGroup, vm, true)).thenReturn(task);
+    when(computeProviderHelper.submitDeleteVmTask(resourceGroup, vm, true,
+      azureOperationPollingTimeout)).thenReturn(task);
     when(computeProviderHelper.pollPendingTask(any(Future.class), anyInt(), anyInt()))
       .thenCallRealMethod();
     when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
@@ -274,9 +301,8 @@ public class AzureComputeProviderTest {
 
   @Test
   public void testAllocateSingleVM() throws Exception {
-    when(computeProviderHelper.submitVmCreationTask(context, vnet, subnet, nsg, as, vmSize,
-      vmNamePrefix, instanceId, privateDomainName, userName, publicKey, dataDiskCount, imageInfo))
-      .thenReturn(response);
+    when(computeProviderHelper.submitVmCreationTask(context, parameters,
+      azureOperationPollingTimeout)).thenReturn(response);
     when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
       .thenReturn(1);
 
@@ -289,17 +315,16 @@ public class AzureComputeProviderTest {
 
     computeProvider.allocate(template, list, 1);
 
-    verify(computeProviderHelper).submitVmCreationTask(context, vnet, subnet, nsg, as, vmSize,
-      vmNamePrefix, instanceId, privateDomainName, userName, publicKey, dataDiskCount, imageInfo);
+    verify(computeProviderHelper).submitVmCreationTask(context, parameters,
+      azureOperationPollingTimeout);
     assertEquals(1, computeProvider.getLastSuccessfulAllocationCount());
   }
 
   @Test
   public void testAllocateWithInterruptedException() throws Exception {
     thrown.expect(InterruptedException.class);
-    when(computeProviderHelper.submitVmCreationTask(context, vnet, subnet, nsg, as, vmSize,
-      vmNamePrefix, instanceId, privateDomainName, userName, publicKey, dataDiskCount, imageInfo))
-      .thenReturn(response);
+    when(computeProviderHelper.submitVmCreationTask(context, parameters,
+      azureOperationPollingTimeout)).thenReturn(response);
     when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
       .thenThrow(InterruptedException.class);
 
@@ -307,7 +332,8 @@ public class AzureComputeProviderTest {
     list.add(instanceId);
 
     computeProvider.allocate(template, list, 1);
-    verify(computeProviderHelper).deleteResources(anyString(), anySet(), anyBoolean());
+    verify(computeProviderHelper).deleteResources(anyString(), anySet(), anyBoolean(),
+      anyInt());
   }
 
   @Test
@@ -315,11 +341,15 @@ public class AzureComputeProviderTest {
     int expectedSuccess = 3;
     int expectedFailure = 1;
     ArrayList<String> instances = new ArrayList<String>();
+    ArrayList<VmCreationParameters> parametersList = new ArrayList<VmCreationParameters>();
     ArrayList<ResourceContext> contexts = new ArrayList<ResourceContext>();
 
     for (int i = 0; i < 4; i++) {
       String tempInstanceId = UUID.randomUUID().toString();
+      VmCreationParameters tempParameters = VmCreationParameters
+        .cloneVmCreationParametersWithNewInstanceId(parameters, tempInstanceId);
       instances.add(tempInstanceId);
+      parametersList.add(tempParameters);
       Future tempResponse = mock(Future.class);
       ResourceContext tempContext = mock(ResourceContext.class);
       contexts.add(tempContext);
@@ -331,9 +361,8 @@ public class AzureComputeProviderTest {
         when(tempResponse.get()).thenReturn(new TaskResult(true, tempContext));
       }
 
-      when(computeProviderHelper.submitVmCreationTask(tempContext, vnet, subnet, nsg, as, vmSize,
-        vmNamePrefix, tempInstanceId, privateDomainName, userName, publicKey, dataDiskCount,
-        imageInfo)).thenReturn(tempResponse);
+      when(computeProviderHelper.submitVmCreationTask(tempContext, tempParameters,
+        azureOperationPollingTimeout)).thenReturn(tempResponse);
     }
 
     when(credentials.createResourceContext(anyString(), anyString(), anyBoolean()))
@@ -348,11 +377,11 @@ public class AzureComputeProviderTest {
     ArgumentCaptor<Set> argumentCaptor = ArgumentCaptor.forClass(Set.class);
     computeProvider.allocate(template, instances, 3);
 
-    verify(computeProviderHelper).deleteResources(anyString(), argumentCaptor.capture(), anyBoolean());
+    verify(computeProviderHelper).deleteResources(anyString(), argumentCaptor.capture(),
+      anyBoolean(), anyInt());
     for (int i = 0; i < 4; i++) {
-      verify(computeProviderHelper).submitVmCreationTask(contexts.get(i), vnet, subnet, nsg, as,
-        vmSize, vmNamePrefix, instances.get(i), privateDomainName, userName, publicKey,
-        dataDiskCount, imageInfo);
+      verify(computeProviderHelper).submitVmCreationTask(contexts.get(i), parametersList.get(i),
+        azureOperationPollingTimeout);
     }
     assertEquals(expectedFailure, argumentCaptor.getValue().size());
     assertEquals(expectedSuccess, computeProvider.getLastSuccessfulAllocationCount());
@@ -363,9 +392,8 @@ public class AzureComputeProviderTest {
     throws Exception {
     thrown.expect(UnrecoverableProviderException.class);
 
-    when(computeProviderHelper.submitVmCreationTask(context, vnet, subnet, nsg, as, vmSize,
-      vmNamePrefix, instanceId, privateDomainName, userName, publicKey, dataDiskCount, imageInfo))
-      .thenReturn(response);
+    when(computeProviderHelper.submitVmCreationTask(context, parameters,
+      azureOperationPollingTimeout)).thenReturn(response);
 
     when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
       .thenReturn(0);
@@ -375,7 +403,8 @@ public class AzureComputeProviderTest {
     try {
       computeProvider.allocate(template, list, 1);
     } catch (Exception e) {
-      verify(computeProviderHelper).deleteResources(anyString(), anySet(), anyBoolean());
+      verify(computeProviderHelper).deleteResources(anyString(), anySet(), anyBoolean(),
+        anyInt());
       throw e;
     }
   }
@@ -468,5 +497,19 @@ public class AzureComputeProviderTest {
     for (InstanceState state : map.values()) {
       assertEquals(InstanceStatus.UNKNOWN, state.getInstanceStatus());
     }
+  }
+
+  @Test
+  public void testCreateNoOpInstanceTemplateValidator(){
+    PowerMockito.when(Configurations.getValidateResourcesFlag(any(Config.class))).thenReturn(false);
+    assertEquals(DefaultConfigurationValidator.class,
+      computeProvider.getResourceTemplateConfigurationValidator().getClass());
+  }
+
+  @Test
+  public void testCreateValidInstanceTemplateValidator(){
+    PowerMockito.when(Configurations.getValidateResourcesFlag(any(Config.class))).thenReturn(true);
+    assertEquals(AzureComputeInstanceTemplateConfigurationValidator.class,
+      computeProvider.getResourceTemplateConfigurationValidator().getClass());
   }
 }

@@ -49,6 +49,7 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
   private boolean isPublicIPConfigured;
   private DateTime startTime;
   private static final Logger LOG = LoggerFactory.getLogger(CleanUpTask.class);
+  private int azureOperationPollingTimeout;
 
   /**
    * Creates a CleanUpTask.
@@ -61,12 +62,14 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
    * @param isPublicIPConfigured  does the template define a public IP that should be cleaned up
    */
   public CleanUpTask(String resourceGroup, VirtualMachine vm,
-    AzureComputeProviderHelper computeProviderHelper, boolean isPublicIPConfigured) {
+    AzureComputeProviderHelper computeProviderHelper, boolean isPublicIPConfigured,
+    int azureOperationPollingTimeout) {
     this.resourceGroup = resourceGroup;
     this.vm = vm;
     this.computeProviderHelper = computeProviderHelper;
     this.isPublicIPConfigured = isPublicIPConfigured;
     this.startTime = DateTime.now();
+    this.azureOperationPollingTimeout = azureOperationPollingTimeout;
   }
 
   /**
@@ -80,13 +83,15 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
    * @param isPublicIPConfigured
    */
   public CleanUpTask(String resourceGroup, ResourceContext context,
-    AzureComputeProviderHelper computeProviderHelper, boolean isPublicIPConfigured) {
+    AzureComputeProviderHelper computeProviderHelper, boolean isPublicIPConfigured,
+    int azureOperationPollingTimeout) {
     this.resourceGroup = resourceGroup;
     this.context = context;
     this.computeProviderHelper = computeProviderHelper;
     this.isPublicIPConfigured = isPublicIPConfigured;
     this.startTime = DateTime.now();
     this.vm = null;
+    this.azureOperationPollingTimeout = azureOperationPollingTimeout;
   }
 
   public TaskResult call() {
@@ -138,12 +143,12 @@ public class CleanUpTask extends AbstractAzureComputeProviderTask
       return new TaskResult(false, ctx);
     }
 
-    LOG.info("Begin deleting vm: {} in resource group: {}", vm.getName(), resourceGroup);
+    LOG.info("Begin deleting VM: {} in resource group: {}.", vm.getName(), resourceGroup);
     int successCount = 0;
     try {
       ComputeOperationResponse response =
         computeProviderHelper.beginDeleteVirtualMachine(resourceGroup, vm);
-      successCount = pollPendingOperation(response, defaultTimeoutInSec,
+      successCount = pollPendingOperation(response, azureOperationPollingTimeout,
         defaultSleepIntervalInSec, LOG, vm.getName());
     } catch (IOException | ServiceException e) {
       LOG.error("Failed to delete VM {}. Please check Azure portal for any not deleted resources.",

@@ -63,6 +63,113 @@ There are instructions on plugin installation in the Cloudera Director Service P
 - See [Azure SDK for Java](https://github.com/Azure/azure-sdk-for-java).
 - More [documentation on using the Azure SDK](https://azure.microsoft.com/en-us/documentation/articles/java-download-windows/)
 
+## Cloudera Director Azure Plugin Config Files
+
+**IMPORTANT:** The [Cloudera Enterprise Reference Architecture for Azure Deployments](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf) (RA) is the authoritative document for supported deployment configurations in Azure.
+
+There are two files that the Cloudera Director Azure Plugin uses to change settings:
+
+* `images.conf`
+* `azure-plugin.conf`
+
+The files and their uses are explained below.
+
+
+### `images.conf`
+
+**What does `images.conf` do?**
+
+The `images.conf` file defines the VM images Cloudera Director can use to provision VMs. The `images.conf` file in this repository is continuously updated with the latest supported VM images. The latest supported images can be found in the [RA](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf).
+
+
+**How do I add another image I want to use?**
+
+1. Take the `images.conf` file found in this repository and add a new image using the following format:
+    ```
+    image-name { # this is used to reference this image within Cloudera Director
+      # these fields uniquely identify the image, their values are found within Azure
+      publisher: some_publisher
+      offer: offer_name
+      sku: sku_name
+      version: version_name
+    }
+    ```
+1. On Cloudera Director server, copy your modified `images.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/images.conf`.
+1. Restart Cloudera Director with `sudo service cloudera-director-server restart`
+1. Now you can use your newly defined image when deploying clusters. Note that in the Cloudera Director UI you won't see the image-name in the dropdown list - just type it in manually and it will work.
+
+
+**Any caveats I should be aware of?**
+
+* When you copy your modified `images.conf` file to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/images.conf` make sure you're putting it in the latest `azure-provider-[version]` directory.
+
+* After updating your version of Cloudera Director you'll need to copy your `.conf` files to the latest `azure-provider-[version]` directory.
+
+
+### `azure-plugin.conf`
+
+**What does `azure-plugin.conf` do?**
+
+The `azure-plugin.conf` file defines settings that Cloudera Director uses to validate VMs before provisioning. There are a bunch of fields, here are the important ones:
+
+* `provider` > `supported-regions`: this is the list of regions that a cluster can be deployed into. Only regions that support premium storage should be added to the list - that list can be found [here](https://azure.microsoft.com/en-us/regions/services/).
+* `instance` > `supported-instances`: this is the list of supported instance sizes that can be used. Only certain sizes have been certified. The latest supported instances can be found in the [Azure Reference Architecture](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf).
+* `instance` > `supported-premium-data-disk-sizes`: this is the list of supported disk sizes that can be used. Only certain sizes have been certified. The latest supported disks can be found in the [Azure Reference Architecture](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf).
+* `instance` > `maximum-standard-data-disk-size`: this is the maximum size standard storage disk that can be used. Only certain sizes have been certified. The latest supported standard disk sizes can be found in the [Azure Reference Architecture](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf).
+
+**How do I add a new region to use?**
+
+1. Take the `azure-plugin.conf` file found in this repository and **add** a new region to the `provider` > `supported-regions` list. The plugin will replace its internal list with this list so make sure you keep all of the supported regions that are already defined in `azure-plugin.conf`
+1. On Cloudera Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
+1. Restart Cloudera Director with `sudo service cloudera-director-server restart`
+1. Now you can use your newly defined region when deploying clusters.
+
+
+**How do I add a new instance to use?**
+
+1. Take the `azure-plugin.conf` file found in this repository and **add** a new instance to the `instance`>`supported-instances` list. The plugin will replace its internal list with this list so make sure you keep all of the supported regions that are already defined in `azure-plugin.conf`
+1. On Cloudera Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
+1. Restart Cloudera Director with `sudo service cloudera-director-server restart`
+1. Now you can use your newly defined region when deploying clusters.
+
+
+**How do I add a new disk size to use?**
+
+1. Take the `azure-plugin.conf` file found in this repository and **add** a new disk size to the `instance`>`supported-premium-data-disk-sizes` list. The plugin will replace its internal list with this list so make sure you keep all of the supported disk sizes that are already defined in `azure-plugin.conf`
+1. On Cloudera Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
+1. Restart Cloudera Director with `sudo service cloudera-director-server restart`
+1. Now you can use your newly defined region when deploying clusters.
+
+
+**Any caveats I should be aware of?**
+
+* When you use a custom `azure-plugin.conf` any keys defined replace those defined internally, so you must append to lists rather than creating a list with only the new values. For example, if you were to add an instance to `instance` > `supported-instances` you would need to keep all of the currently defined supported instances and append yours:
+
+    ```
+    supported-instances: [
+        "STANDARD_DS14",
+        "STANDARD_DS14_V2"
+        "STANDARD_DS13",
+        "STANDARD_DS13_V2",
+        "STANDARD_DS12_V2",
+        "YOUR_NEW_INSTANCE"
+    ]
+    ```
+    If you were to have a list with only `YOUR_NEW_INSTANCE` the rest of the instances would stop working.
+
+* When you copy your modified `azure-plugin.conf` file to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf` make sure you're putting it in the latest `azure-provider-[version]` directory.
+
+* After updating your version of Cloudera Director you'll need to copy your `.conf` files to the latest `azure-provider-[version]` directory.
+
+
+**What about the other fields?**
+
+* `provider` > `azure-backend-operation-polling-timeout-second` defines the timeout in seconds for a task interacting with the Azure backend. Chances are you won't need to change this.
+* `instance` > `instance-prefix-regex` defines the regex that instances names get validated against. This will only change if Azure changes their backend. Don't change this.
+* `instance` > `dns-fqdn-suffix-regex` defines the regex that the FQDN Suffix gets validated against. This will only change if Azure changes their backend. Don't change this.
+* `instance` > `azure-disallowed-usernames` defines the list of usernames disallowed by Azure. This will only change if Azure changes their backend. Don't change this.
+
+
 ## Copyright and License
 Copyright © 2016 Cloudera. Licensed under the Apache License.
 

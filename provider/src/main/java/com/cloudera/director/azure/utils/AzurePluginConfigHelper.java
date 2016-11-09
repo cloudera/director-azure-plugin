@@ -16,8 +16,11 @@
 
 package com.cloudera.director.azure.utils;
 
+import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES;
+
 import com.cloudera.director.azure.AzureLauncher;
 import com.cloudera.director.azure.Configurations;
+import com.microsoft.azure.management.storage.models.AccountType;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigList;
@@ -26,6 +29,8 @@ import com.typesafe.config.ConfigSyntax;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * This class provides a set of methods to read & validate Azure Director Plugin configs.
@@ -78,5 +83,64 @@ public class AzurePluginConfigHelper {
       throw new RuntimeException(
         "Supported instance types in the the Azure director plugin configuration is empty.");
     }
+
+    validateStorageAccountType(instanceSection.getStringList(
+      AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
+  }
+
+  /**
+   * Helper to validate the Storage Account Type portion of the plugin config.
+   *
+   * @param storageAccountTypes list of storage account type strings to be checked
+   * @throws IllegalArgumentException if a storage account type in the list is not valid
+   */
+  static void validateStorageAccountType(List<String> storageAccountTypes) {
+    for (String storageAccountType : storageAccountTypes) {
+      try {
+        AccountType.valueOf(storageAccountType);
+      } catch (IllegalArgumentException e) {
+        throw new IllegalArgumentException(String.format(
+          "Storage Account Type '%s' is not a valid Azure Storage Account Type. Valid types: '%s'",
+          storageAccountType, Arrays.asList(AccountType.values())));
+      }
+    }
+  }
+
+  /**
+   * Helper to read and parse two config files and merge them together as follows:
+   * 1. Read and parse the `filename` file
+   * 2. Read and parse the `filename` file in the `configurationDirectory` directory
+   * 3. Merge the two, with values in `configurationDirectory` + `filename` overriding values in
+   * `filename`
+   *
+   * @param filename               file name of the config file to be parsed
+   * @param configurationDirectory directory in which the config file lives
+   * @return                       merged config
+   */
+  public static Config mergeConfig(String filename, File configurationDirectory) {
+    Config config = null;
+
+    // Read in the default config file
+    try {
+      config = AzurePluginConfigHelper.parseConfigFromClasspath(filename);
+    } catch (Exception e) {
+      throw new RuntimeException(e);
+    }
+
+    // Check if an additional config file exists in the configuration directory.
+    File configFile = new File(configurationDirectory, filename);
+    if (configFile.canRead()) {
+      try {
+        Config configFromFile = AzurePluginConfigHelper.parseConfigFromFile(configFile);
+
+        // Merge the two configurations, with values in `configFromFile` overriding values in
+        // `config`.
+        config = configFromFile.withFallback(config);
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      }
+    }
+
+    return config;
   }
 }

@@ -61,6 +61,7 @@ public class CleanUpTaskTest {
   DeleteOperationResponse dor = mock(DeleteOperationResponse.class);
   OperationResponse or = mock(OperationResponse.class);
   ComputeLongRunningOperationResponse clror = mock(ComputeLongRunningOperationResponse.class);
+  int azureOperationPollingTimeout = 1000;
 
   @Rule
   public ExpectedException thrown = ExpectedException.none();
@@ -91,7 +92,7 @@ public class CleanUpTaskTest {
     when(helper.getAvailabilitySetNameFromVm(vm)).thenReturn(asName);
     when(helper.getResourceContextFromVm(anyString(), any(VirtualMachine.class))).thenReturn(context);
 
-    CleanUpTask task = new CleanUpTask(resourceGroup, context, helper, true);
+    CleanUpTask task = new CleanUpTask(resourceGroup, context, helper, true, azureOperationPollingTimeout);
     Future<TaskResult> future = service.submit(task);
     TaskResult result = future.get(600, TimeUnit.SECONDS);
     verify(helper).beginDeleteStorageAccountByName(anyString(), anyString());
@@ -116,7 +117,7 @@ public class CleanUpTaskTest {
     when(helper.getAvailabilitySetNameFromVm(any(VirtualMachine.class))).thenReturn(asName);
     when(helper.getResourceContextFromVm(anyString(), any(VirtualMachine.class))).thenReturn(context);
 
-    CleanUpTask task = new CleanUpTask(resourceGroup, vm, helper, true);
+    CleanUpTask task = new CleanUpTask(resourceGroup, vm, helper, true, azureOperationPollingTimeout);
     Future<TaskResult> future = service.submit(task);
     TaskResult result = future.get(600, TimeUnit.SECONDS);
     verify(helper).beginDeleteStorageAccountOnVM(resourceGroup, vm);

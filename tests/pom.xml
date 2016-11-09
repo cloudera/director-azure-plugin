@@ -23,12 +23,12 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>azure</artifactId>
-        <version>1.0.1</version>
+        <version>1.1.0</version>
     </parent>
 
     <groupId>com.cloudera.director</groupId>
     <artifactId>azure-provider-tests</artifactId>
-    <version>1.0.1</version>
+    <version>1.1.0</version>
 
     <name>Cloudera-Director-Azure-Plugin-Test</name>
 
@@ -42,6 +42,7 @@
         <typesafe-config.version>1.2.0</typesafe-config.version>
         <maven-compiler-plugin.version>3.3</maven-compiler-plugin.version>
         <mockito.version>1.10.19</mockito.version>
+        <powermock.version>1.6.5</powermock.version>
         <logback.version>1.1.2</logback.version>
         <joda-time.version>2.8</joda-time.version>
 
@@ -97,6 +98,18 @@
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>
             <version>${mockito.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.powermock</groupId>
+            <artifactId>powermock-module-junit4</artifactId>
+            <version>${powermock.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.powermock</groupId>
+            <artifactId>powermock-api-mockito</artifactId>
+            <version>${powermock.version}</version>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

@@ -235,7 +235,7 @@ public class AzureComputeProviderLiveTest {
     AzureComputeProviderHelper computeProviderHelper = cred.getComputeProviderHelper();
     ComputeManagementClient computeManagementClient = ComputeManagementService.create(config);
     String vmName = template.getInstanceNamePrefix() + "-" + instances.toArray()[0];
-    String rgName = TestConfigHelper.DEFAULT_TEST_RESOURCE_GROUP;
+    String rgName = cfgHelper.getTestResourceGroup();
 
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations().get(rgName, vmName)
       .getVirtualMachine();

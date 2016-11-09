@@ -38,6 +38,9 @@ import com.typesafe.config.Config;
 import java.util.Collections;
 import java.util.NoSuchElementException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Azure cloud provider plugin
  */
@@ -46,6 +49,8 @@ public class AzureCloudProvider extends AbstractCloudProvider {
   private AzureCredentials credentials;
   private Config azurePluginConfig;
   private Config configurableImages;
+
+  private static final Logger LOG = LoggerFactory.getLogger(AzureCloudProvider.class);
 
   /**
    * The cloud provider ID.
@@ -90,6 +95,11 @@ public class AzureCloudProvider extends AbstractCloudProvider {
   @Override
   protected ConfigurationValidator getResourceProviderConfigurationValidator(
     ResourceProviderMetadata resourceProviderMetadata) {
+    if (!Configurations.getValidateResourcesFlag(azurePluginConfig)) {
+      LOG.info("Skip all compute provider validator checks.");
+      return resourceProviderMetadata.getProviderConfigurationValidator();
+    }
+
     ConfigurationValidator providerSpecificValidator;
     if (resourceProviderMetadata.getId().equals(AzureComputeProvider.METADATA.getId())) {
       providerSpecificValidator = new AzureComputeProviderConfigurationValidator(

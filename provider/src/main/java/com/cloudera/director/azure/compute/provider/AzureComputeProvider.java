@@ -20,11 +20,13 @@ package com.cloudera.director.azure.compute.provider;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT;
+import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.IMAGE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP;
+import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.STORAGE_ACCOUNT_TYPE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP;
@@ -39,6 +41,7 @@ import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationValidator;
 import com.cloudera.director.azure.compute.instance.TaskResult;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
+import com.cloudera.director.azure.utils.VmCreationParameters;
 import com.cloudera.director.spi.v1.compute.util.AbstractComputeInstance;
 import com.cloudera.director.spi.v1.compute.util.AbstractComputeProvider;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
@@ -62,6 +65,7 @@ import com.microsoft.azure.management.compute.models.VirtualMachine;
 import com.microsoft.azure.management.network.models.NetworkSecurityGroup;
 import com.microsoft.azure.management.network.models.Subnet;
 import com.microsoft.azure.management.network.models.VirtualNetwork;
+import com.microsoft.azure.management.storage.models.AccountType;
 import com.microsoft.azure.utility.ResourceContext;
 import com.microsoft.windowsazure.exception.ServiceException;
 import com.typesafe.config.Config;
@@ -91,8 +95,13 @@ public class AzureComputeProvider
 
   private static final Logger LOG = LoggerFactory.getLogger(AzureComputeProvider.class);
 
-  private static final int TIMEOUT_SECONDS = 1800;
+  // Azure operation as well as the access token has life span of one hour
+  private static final int TASKS_POLLING_TIMEOUT_SECONDS =
+    Configurations.TASKS_POLLING_TIMEOUT_SECONDS;
   private static final int POLLING_INTERVAL_SECONDS = 10;
+  // Initialize in constructor using value from azurePluginConfig
+  public final int azureOperationPollingTimeout;
+
   private static final int RESOURCE_PREFIX_LENGTH = 8;
 
   // Resource name template, instance-id+random+type
@@ -146,10 +155,15 @@ public class AzureComputeProvider
         azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_INSTANCE),
         configurableImages,
         credentials, location);
+    this.azureOperationPollingTimeout = getAzureOperationPollingTimeoutFromConfig();
   }
 
   @Override
   public ConfigurationValidator getResourceTemplateConfigurationValidator() {
+    if (!Configurations.getValidateResourcesFlag(azurePluginConfig)) {
+      LOG.info("Skip all compute instance template configuration validator checks.");
+      return super.getResourceTemplateConfigurationValidator();
+    }
     return computeInstanceTemplateConfigValidator;
   }
 
@@ -178,8 +192,13 @@ public class AzureComputeProvider
       template.getConfigurationValue(AVAILABILITY_SET, templateLocalizationContext);
     String vmSize =
       template.getConfigurationValue(VMSIZE, templateLocalizationContext);
+    // storage account type has already been validated
+    AccountType storageAccountType = AccountType.valueOf(
+      template.getConfigurationValue(STORAGE_ACCOUNT_TYPE, templateLocalizationContext));
     int dataDiskCount =
       Integer.parseInt(template.getConfigurationValue(DATA_DISK_COUNT, templateLocalizationContext));
+    int dataDiskSizeGiB =
+      Integer.parseInt(template.getConfigurationValue(DATA_DISK_SIZE, templateLocalizationContext));
     String vnrgName =
       template.getConfigurationValue(VIRTUAL_NETWORK_RESOURCE_GROUP, templateLocalizationContext);
     String vnName =
@@ -265,9 +284,12 @@ public class AzureComputeProvider
 
         contexts.add(context);
 
-        createVmTasks.add(computeProviderHelper.submitVmCreationTask(
-          context, vn, subnet, nsg, as, vmSize, template.getInstanceNamePrefix(), instanceId,
-          fqdnSuffix, adminName, sshPublicKey, dataDiskCount, imageInfo));
+        VmCreationParameters parameters = new VmCreationParameters(vn, subnet, nsg, as,
+          vmSize, template.getInstanceNamePrefix(), instanceId, fqdnSuffix, adminName,
+          sshPublicKey, storageAccountType, dataDiskCount, dataDiskSizeGiB, imageInfo);
+        Future<TaskResult> task = computeProviderHelper.submitVmCreationTask(context, parameters,
+          azureOperationPollingTimeout);
+        createVmTasks.add(task);
       } else {
         LOG.info("VM {} already exists.", constructVmName(template, instanceId));
       }
@@ -277,7 +299,7 @@ public class AzureComputeProvider
 
     // Wait for VMs to come up
     lastSuccessfulAllocationCount = computeProviderHelper.pollPendingTasks(createVmTasks,
-      TIMEOUT_SECONDS, POLLING_INTERVAL_SECONDS, failedContexts);
+      TASKS_POLLING_TIMEOUT_SECONDS, POLLING_INTERVAL_SECONDS, failedContexts);
 
     LOG.info("Successfully allocated {} VMs.", lastSuccessfulAllocationCount);
 
@@ -301,10 +323,103 @@ public class AzureComputeProvider
         lastSuccessfulAllocationCount, instanceIds.size(), minCount);
     }
 
-    // more the minCount, allocation is consider successful
+    // More than minCount VMs have successfully been provisioned, allocation is consider successful
+
+    // Remove all of the failed VMs from contexts
+    for (ResourceContext failed : failedContexts) {
+      contexts.remove(failed);
+    }
+
+    // Log the overall template info for this batch
+    LOG.info("VM Template info for this batch: " +
+      "Batch Size: {}; " +
+      "Succeeded: {}; " +
+      "Failed: {}; " +
+      "VM Size: {}; " +
+      "Image Info: {}; " +
+      "Compute Resource Group Name: {}; " +
+      "Virtual Network Resource Group Name: {}; " +
+      "Virtual Network Name: {}; " +
+      "Subnet Name: {}; " +
+      "Host FQDN Suffix: {}; " +
+      "Network Security Group Resource Group Name: {}; " +
+      "Network Security Group Name: {}; " +
+      "Public IP: {}; " +
+      "Availability Set Name: {}; " +
+      "Data Disk Count: {}; " +
+      "Data Disk Size in GiB: {}; ",
+      contexts.size() + failedContexts.size(),
+      contexts.size(),
+      failedContexts.size(),
+      vmSize,
+      imageInfo,
+      computeRgName,
+      vnrgName,
+      vnName,
+      subnetName,
+      fqdnSuffix,
+      nsgrgName,
+      nsgName,
+      publicIpFlag,
+      availabilitySetName,
+      dataDiskCount,
+      dataDiskSizeGiB
+    );
+
+    // Log the individual VMs for easier correlation for debugging
+    logContexts(contexts, fqdnSuffix, "succeeded");
+    logContexts(failedContexts, fqdnSuffix, "failed");
+
     // just log any error messages and exit
     if (accumulator.hasError()) {
       logErrorMessage(accumulator);
+    }
+  }
+
+  /**
+   * Logs all of an individual VMs resources together to allow easier correlation for debugging.
+   *
+   * @param contexts the VMs to log
+   * @param fqdnSuffix used for logging logic
+   * @param status used for logging text
+   */
+  private void logContexts(Collection<ResourceContext> contexts, String fqdnSuffix, String status) {
+    for (ResourceContext context : contexts) {
+      // These assignments can throw NullPointerExceptions
+      String vmName;
+      String internalFQDN;
+      try {
+        // vmName is in the form userDefinedPrefix-UUID
+        // E.g. master-7da97fd2-9d6b-4e31-a926-f9d4721656a2
+        vmName = context.getVMInput().getName();
+
+        // internalFQDN is in the form userDefinedPrefix-firstEightCharactersOfUUID.fqdnSuffix
+        // E.g. master-7da97fd2.cdh-cluster.internal
+        // The number 28 is used here to get cut off the last 28 characters of the UUID. Given that
+        // a UUID has 36 characters (including dashes) and the vnName ends with a UUID this will
+        // return the user defined portion and the first 8 characters (36 - 28 = 8) of the UUID
+        internalFQDN = vmName.substring(0, vmName.length() - 28) + "." + fqdnSuffix;
+      } catch (NullPointerException e) {
+        vmName = null;
+        internalFQDN = null;
+      }
+      // these will always be set
+      String niName = context.getNetworkInterfaceName();
+      String pipName = context.getPublicIpName();
+      String saName = context.getStorageAccountName();
+
+      LOG.info("Virtual Machine allocation " + status + " for VM: " +
+        "VM Name: {}; " +
+        "Host Internal FQDN: {}; " +
+        "Network Interface Name: {}; " +
+        "Public IP Name: {}; " +
+        "Storage Account Name: {};",
+        vmName,
+        internalFQDN,
+        niName,
+        pipName,
+        saName
+      );
     }
   }
 
@@ -389,7 +504,8 @@ public class AzureComputeProvider
     LOG.info("Tearing down resources within resource group: {}.", resourceGroup);
     AzureComputeProviderHelper computeProviderHelper = credentials.getComputeProviderHelper();
     try {
-      computeProviderHelper.deleteResources(resourceGroup, contexts, isPublicIPConfigured);
+      computeProviderHelper.deleteResources(resourceGroup, contexts, isPublicIPConfigured,
+        azureOperationPollingTimeout);
     } catch (InterruptedException e) {
       String errMsg = "Resource cleanup is interrupted. There may be resources left not cleaned up."
         + " Please check Azure portal to make sure remaining resources are deleted.";
@@ -467,6 +583,7 @@ public class AzureComputeProvider
   @Override
   public void delete(AzureComputeInstanceTemplate template, Collection<String> instanceIds) throws
     InterruptedException {
+    boolean isPublicIpConfigured = getPublicIpFlagFromTemplate(template);
     LOG.info("Deleting the following VMs (VM name prefix is '" + template.getInstanceNamePrefix()
       + "'): " + instanceIds);
     String rgName = getResourceGroupFromTemplate(template);
@@ -482,13 +599,12 @@ public class AzureComputeProvider
       if (vm != null) {
         LOG.debug("Sending delete request to Azure for VM: {}.", vm.getName());
         deleteVmTasks.add(computeProviderHelper.submitDeleteVmTask(rgName, vm,
-          template.getConfigurationValue(PUBLIC_IP,
-            SimpleResourceTemplate.getTemplateLocalizationContext(getLocalizationContext()))
-            .equals("Yes")));
+          isPublicIpConfigured, azureOperationPollingTimeout));
       }
     }
     // wait for VM to be deleted
-    lastSuccessfulDeletionCount = computeProviderHelper.pollPendingTasks(deleteVmTasks, TIMEOUT_SECONDS,
+    lastSuccessfulDeletionCount = computeProviderHelper.pollPendingTasks(deleteVmTasks,
+      TASKS_POLLING_TIMEOUT_SECONDS,
       POLLING_INTERVAL_SECONDS, null);
 
     LOG.info("Successfully deleted {} VMs.", lastSuccessfulDeletionCount);
@@ -500,6 +616,12 @@ public class AzureComputeProvider
       throw new UnrecoverableProviderException("Error occurred during instance deletion.",
         pluginExceptionDetails);
     }
+  }
+
+  private boolean getPublicIpFlagFromTemplate(AzureComputeInstanceTemplate template) {
+    return template.getConfigurationValue(PUBLIC_IP,
+      SimpleResourceTemplate.getTemplateLocalizationContext(getLocalizationContext()))
+      .equals("Yes");
   }
 
   public AzureComputeInstanceTemplate createResourceTemplate(
@@ -520,5 +642,10 @@ public class AzureComputeProvider
     LocalizationContext templateLocalizationContext =
       SimpleResourceTemplate.getTemplateLocalizationContext(providerLocalizationContext);
     return template.getConfigurationValue(COMPUTE_RESOURCE_GROUP, templateLocalizationContext);
+  }
+
+  private int getAzureOperationPollingTimeoutFromConfig() {
+    return azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_PROVIDER)
+      .getInt(Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
   }
 }

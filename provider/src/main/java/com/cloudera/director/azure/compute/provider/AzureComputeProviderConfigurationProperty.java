@@ -36,19 +36,32 @@ public enum AzureComputeProviderConfigurationProperty implements ConfigurationPr
         "<a target='_blank' href='https://azure.microsoft.com/en-us/regions/'>More Information</a>")
     .widget(ConfigurationProperty.Widget.OPENLIST)
     .addValidValues(
-      "westus",
-      "eastus",
-      "northeurope",
-      "westeurope",
-      "eastasia",
-      "southeastasia",
-      "southcentralus",
-      "centralus",
-      "eastus2",
-      "japaneast",
-      "japanwest",
-      "australiaeast",
-      "australiasoutheast")
+        // Americas
+        "eastus",
+        "eastus2",
+        "centralus",
+        "northcentralus",
+        "southcentralus",
+        "westcentralus",
+        "westus",
+        "westus2",
+        "canadaeast",
+        "canadacentral",
+        "brazilsouth",
+        // Europe
+        "northeurope",
+        "westeurope",
+        "ukwest",
+        "uksouth",
+        // Asia Pacific
+        "southeastasia",
+        "eastasia",
+        "australiaeast",
+        "australiasoutheast",
+        "centralindia",
+        "southindia",
+        "japaneast",
+        "japanwest")
     .build());
 
   /**

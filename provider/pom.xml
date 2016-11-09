@@ -23,12 +23,12 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>azure</artifactId>
-        <version>1.0.1</version>
+        <version>1.1.0</version>
     </parent>
 
     <groupId>com.cloudera.director</groupId>
     <artifactId>azure-provider</artifactId>
-    <version>1.0.1</version>
+    <version>1.1.0</version>
 
     <name>Cloudera-Director-Azure-Plugin</name>
 
