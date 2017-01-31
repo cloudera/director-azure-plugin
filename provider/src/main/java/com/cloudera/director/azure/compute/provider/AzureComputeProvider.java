@@ -40,6 +40,7 @@ import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationValidator;
 import com.cloudera.director.azure.compute.instance.TaskResult;
+import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
 import com.cloudera.director.azure.utils.VmCreationParameters;
 import com.cloudera.director.spi.v1.compute.util.AbstractComputeInstance;
@@ -109,8 +110,6 @@ public class AzureComputeProvider
 
   private int lastSuccessfulAllocationCount = 0;
   private AzureCredentials credentials;
-  private Config azurePluginConfig;
-  private Config configurableImages;
   private int lastSuccessfulDeletionCount = 0;
 
   private final ConfigurationValidator computeInstanceTemplateConfigValidator;
@@ -144,23 +143,19 @@ public class AzureComputeProvider
 
 
   public AzureComputeProvider(Configured configuration, AzureCredentials credentials,
-    Config pluginConfig, Config configurableImages, LocalizationContext localizationContext) {
+    LocalizationContext localizationContext) {
     super(configuration, METADATA, localizationContext);
     this.credentials = credentials;
-    this.azurePluginConfig = pluginConfig;
-    this.configurableImages = configurableImages;
     String location = this.getConfigurationValue(AzureComputeProviderConfigurationProperty.REGION, localizationContext);
     this.computeInstanceTemplateConfigValidator =
       new AzureComputeInstanceTemplateConfigurationValidator(
-        azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_INSTANCE),
-        configurableImages,
         credentials, location);
     this.azureOperationPollingTimeout = getAzureOperationPollingTimeoutFromConfig();
   }
 
   @Override
   public ConfigurationValidator getResourceTemplateConfigurationValidator() {
-    if (!Configurations.getValidateResourcesFlag(azurePluginConfig)) {
+    if (!AzurePluginConfigHelper.getValidateResourcesFlag()) {
       LOG.info("Skip all compute instance template configuration validator checks.");
       return super.getResourceTemplateConfigurationValidator();
     }
@@ -171,7 +166,6 @@ public class AzureComputeProvider
     int minCount) throws InterruptedException {
     LOG.info("Starting to allocate the following instances {}.",instanceIds);
 
-    AzureComputeProviderHelper computeProviderHelper = credentials.getComputeProviderHelper();
     PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
     LocalizationContext providerLocalizationContext = getLocalizationContext();
     LocalizationContext templateLocalizationContext =
@@ -217,7 +211,7 @@ public class AzureComputeProvider
     String image = template.getConfigurationValue(IMAGE, templateLocalizationContext);
     Config imageCfg;
     try {
-      imageCfg = configurableImages.getConfig(image);
+      imageCfg = AzurePluginConfigHelper.getConfigurableImages().getConfig(image);
     } catch (Missing | WrongType e) {
       LOG.error("Failed to parse image details from plugin config.", e);
       throw new UnrecoverableProviderException(e);
@@ -234,6 +228,8 @@ public class AzureComputeProvider
     NetworkSecurityGroup nsg;
     AvailabilitySet as;
 
+    // This AzureComputeProviderHelper should not be used by VM create tasks
+    AzureComputeProviderHelper computeProviderHelper = credentials.getComputeProviderHelper();
     // Make sure all the required resources have been pre-configured and are present
     try {
       computeProviderHelper.getResourceGroup(computeRgName);
@@ -260,6 +256,8 @@ public class AzureComputeProvider
     }
     LOG.info("The following VMs already exists: {}.", existingNames);
 
+    TaskRunner taskRunner = TaskRunner.build();
+
     // Create VMs in parallel.
     for (String instanceId : instanceIds) {
       // only create VM if the vm does not exist
@@ -284,11 +282,16 @@ public class AzureComputeProvider
 
         contexts.add(context);
 
+        // each create task uses its own AzureComputeProviderHelper instance
+        AzureComputeProviderHelper computeProviderHelperForTask =
+            credentials.getComputeProviderHelper();
+
         VmCreationParameters parameters = new VmCreationParameters(vn, subnet, nsg, as,
           vmSize, template.getInstanceNamePrefix(), instanceId, fqdnSuffix, adminName,
           sshPublicKey, storageAccountType, dataDiskCount, dataDiskSizeGiB, imageInfo);
-        Future<TaskResult> task = computeProviderHelper.submitVmCreationTask(context, parameters,
-          azureOperationPollingTimeout);
+
+        Future<TaskResult> task = taskRunner.submitVmCreationTask(computeProviderHelperForTask,
+            context, parameters, azureOperationPollingTimeout);
         createVmTasks.add(task);
       } else {
         LOG.info("VM {} already exists.", constructVmName(template, instanceId));
@@ -298,7 +301,7 @@ public class AzureComputeProvider
     Set<ResourceContext> failedContexts = new HashSet<>(contexts);
 
     // Wait for VMs to come up
-    lastSuccessfulAllocationCount = computeProviderHelper.pollPendingTasks(createVmTasks,
+    lastSuccessfulAllocationCount = taskRunner.pollPendingTasks(createVmTasks,
       TASKS_POLLING_TIMEOUT_SECONDS, POLLING_INTERVAL_SECONDS, failedContexts);
 
     LOG.info("Successfully allocated {} VMs.", lastSuccessfulAllocationCount);
@@ -464,7 +467,7 @@ public class AzureComputeProvider
     PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
     List<AzureComputeInstance> result = new ArrayList<AzureComputeInstance>();
     Map<String, VirtualMachine> prefixedNameToVmMapping = listVmsInResourceGroup(rgName,
-      computeProviderHelper, accumulator);
+        accumulator);
     for (String currentId : instanceIds) {
       try {
         String key = constructVmName(template, currentId);
@@ -502,10 +505,11 @@ public class AzureComputeProvider
   private void deleteResources(String resourceGroup, Collection<ResourceContext> contexts,
     boolean isPublicIPConfigured) {
     LOG.info("Tearing down resources within resource group: {}.", resourceGroup);
-    AzureComputeProviderHelper computeProviderHelper = credentials.getComputeProviderHelper();
+    AzureComputeProviderHelper computeProviderHelperForTask = credentials.getComputeProviderHelper();
+    TaskRunner taskRunner = TaskRunner.build();
     try {
-      computeProviderHelper.deleteResources(resourceGroup, contexts, isPublicIPConfigured,
-        azureOperationPollingTimeout);
+      taskRunner.submitAndRunResourceDeleteTasks(computeProviderHelperForTask, resourceGroup,
+          contexts, isPublicIPConfigured, azureOperationPollingTimeout);
     } catch (InterruptedException e) {
       String errMsg = "Resource cleanup is interrupted. There may be resources left not cleaned up."
         + " Please check Azure portal to make sure remaining resources are deleted.";
@@ -530,7 +534,7 @@ public class AzureComputeProvider
     AzureComputeProviderHelper computeProviderHelper = credentials.getComputeProviderHelper();
 
     Map<String, VirtualMachine> prefixedNameToVmMapping = listVmsInResourceGroup(rgName,
-      computeProviderHelper, accumulator);
+        accumulator);
     for (String currentId : instanceIds) {
       boolean found = false;
       try {
@@ -560,17 +564,16 @@ public class AzureComputeProvider
    * Lists all VMs in the resource group.
    *
    * @param rgName name of the Azure ResourceGroup to list the VMs
-   * @param computeProviderHelper
    * @param accumulator error accumulator
    * @return a map contains VM name, VM object pair. In case of any Exception was thrown, the map
    * will be empty
    */
   private Map<String, VirtualMachine> listVmsInResourceGroup(
-    String rgName, AzureComputeProviderHelper computeProviderHelper,
-    PluginExceptionConditionAccumulator accumulator) {
+    String rgName, PluginExceptionConditionAccumulator accumulator) {
     HashMap<String, VirtualMachine> prefixedNameToVmMapping = new HashMap<>();
+    AzureComputeProviderHelper computeProviderHelper = credentials.getComputeProviderHelper();
     try {
-      for (VirtualMachine vm:computeProviderHelper.getVirtualMachines(rgName)) {
+      for (VirtualMachine vm : computeProviderHelper.getVirtualMachines(rgName)) {
         prefixedNameToVmMapping.put(vm.getName(), vm);
       }
     } catch (ServiceException | URISyntaxException | IOException e) {
@@ -587,23 +590,24 @@ public class AzureComputeProvider
     LOG.info("Deleting the following VMs (VM name prefix is '" + template.getInstanceNamePrefix()
       + "'): " + instanceIds);
     String rgName = getResourceGroupFromTemplate(template);
-    AzureComputeProviderHelper computeProviderHelper = credentials.getComputeProviderHelper();
     PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
 
     Map<String, VirtualMachine> prefixedNameToVmMapping = listVmsInResourceGroup(rgName,
-      computeProviderHelper, accumulator);
+        accumulator);
     Set<Future<TaskResult>> deleteVmTasks = new HashSet<>();
+    TaskRunner taskRunner = TaskRunner.build();
     for (String currentId : instanceIds) {
       String key = constructVmName(template, currentId);
       VirtualMachine vm = prefixedNameToVmMapping.get(key);
       if (vm != null) {
         LOG.debug("Sending delete request to Azure for VM: {}.", vm.getName());
-        deleteVmTasks.add(computeProviderHelper.submitDeleteVmTask(rgName, vm,
+        AzureComputeProviderHelper computeProviderHelperForTask = credentials.getComputeProviderHelper();
+        deleteVmTasks.add(taskRunner.submitDeleteVmTask(computeProviderHelperForTask, rgName, vm,
           isPublicIpConfigured, azureOperationPollingTimeout));
       }
     }
     // wait for VM to be deleted
-    lastSuccessfulDeletionCount = computeProviderHelper.pollPendingTasks(deleteVmTasks,
+    lastSuccessfulDeletionCount = taskRunner.pollPendingTasks(deleteVmTasks,
       TASKS_POLLING_TIMEOUT_SECONDS,
       POLLING_INTERVAL_SECONDS, null);
 
@@ -645,7 +649,7 @@ public class AzureComputeProvider
   }
 
   private int getAzureOperationPollingTimeoutFromConfig() {
-    return azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_PROVIDER)
+    return AzurePluginConfigHelper.getAzurePluginConfigProviderSection()
       .getInt(Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
   }
 }

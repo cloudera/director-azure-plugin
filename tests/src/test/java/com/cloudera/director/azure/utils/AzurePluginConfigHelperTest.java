@@ -265,5 +265,23 @@ public class AzurePluginConfigHelperTest {
     }
   }
 
-  // FIXME add a test case to verify specific sections missing. Manually testing for now.
+  @Test
+  public void testMissingPollingTimeoutSection() throws Exception {
+    // try to read and parse plugin config file
+    Config cfg = AzurePluginConfigHelper.parseConfigFromClasspath(
+      Configurations.AZURE_CONFIG_FILENAME);
+
+    Config providerSectionWithoutPolling = cfg.withoutPath(
+      Configurations.AZURE_CONFIG_PROVIDER + "." +
+        Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
+    try {
+      AzurePluginConfigHelper.validatePluginConfig(providerSectionWithoutPolling);
+      fail("Did not throw expected exception due to missing config value");
+    } catch(RuntimeException e) {
+      assertTrue(
+        e.getMessage()
+          .contains(
+            Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS));
+    }
+  }
 }

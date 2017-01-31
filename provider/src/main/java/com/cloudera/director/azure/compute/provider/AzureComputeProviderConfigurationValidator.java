@@ -19,12 +19,13 @@ package com.cloudera.director.azure.compute.provider;
 import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_PROVIDER_REGIONS;
 import static com.cloudera.director.spi.v1.model.util.Validations.addError;
 
+import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.typesafe.config.Config;
 
+import com.typesafe.config.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,16 +36,12 @@ import org.slf4j.LoggerFactory;
 public class AzureComputeProviderConfigurationValidator implements ConfigurationValidator {
   private static final Logger LOG = LoggerFactory.getLogger(AzureComputeProviderConfigurationValidator.class);
 
-  private Config pluginConfig;
-  static final String REGION_NOT_SUPPORTED_MSG = "Region '%s' does not support premium storage.";
-
-  public AzureComputeProviderConfigurationValidator(Config cfg) {
-    this.pluginConfig = cfg;
-  }
+  static final String REGION_NOT_SUPPORTED_MSG =
+    "Region '%s' is not supported. Use a region from this list: %s";
 
   @Override
-  public void validate(String name, Configured configuration, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext) {
+  public void validate(String name, Configured configuration,
+    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
     checkPremiumStorage(configuration, accumulator, localizationContext);
   }
 
@@ -55,14 +52,19 @@ public class AzureComputeProviderConfigurationValidator implements Configuration
    * @param accumulator         error accumulator
    * @param localizationContext localization context to extract config
    */
-  void checkPremiumStorage(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext) {
+  void checkPremiumStorage(Configured directorConfig,
+    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
+    Config pluginConfigProviderSection = AzurePluginConfigHelper.getAzurePluginConfigProviderSection();
     String regionName =
-      directorConfig.getConfigurationValue(AzureComputeProviderConfigurationProperty.REGION, localizationContext);
-    if (!pluginConfig.getStringList(AZURE_CONFIG_PROVIDER_REGIONS).contains(regionName)) {
-      LOG.error("Region '" + regionName + "' does not support premium storage.");
-      addError(accumulator, AzureComputeProviderConfigurationProperty.REGION, localizationContext, null,
-        REGION_NOT_SUPPORTED_MSG, regionName);
+      directorConfig.getConfigurationValue(AzureComputeProviderConfigurationProperty.REGION,
+        localizationContext);
+    if (!pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS)
+      .contains(regionName)) {
+      LOG.error(String.format(REGION_NOT_SUPPORTED_MSG, regionName,
+        pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS)));
+      addError(accumulator, AzureComputeProviderConfigurationProperty.REGION, localizationContext,
+        null, REGION_NOT_SUPPORTED_MSG, regionName,
+        pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS));
     }
   }
 }

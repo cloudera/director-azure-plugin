@@ -35,6 +35,7 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
     .name("Image Alias")
     .addValidValues(
       "cloudera-centos-6-latest",
+      "cloudera-centos-68-latest",
       "cloudera-centos-72-latest",
       "redhat-rhel-67-latest",
       "redhat-rhel-72-latest")
@@ -49,11 +50,14 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
       .getConfigKey())
     .name("VirtualMachine Size")
     .addValidValues(
+      "STANDARD_DS15_V2",
       "STANDARD_DS14",
       "STANDARD_DS14_V2",
       "STANDARD_DS13",
       "STANDARD_DS13_V2",
-      "STANDARD_DS12_V2")
+      "STANDARD_DS12_V2",
+      "STANDARD_GS5",
+      "STANDARD_GS4")
     .defaultDescription(
       "The machine type.<br />" +
         "<a target='_blank' href='https://azure.microsoft.com/en-us/documentation/articles/virtual-machines-linux-sizes/'>More Information</a>")

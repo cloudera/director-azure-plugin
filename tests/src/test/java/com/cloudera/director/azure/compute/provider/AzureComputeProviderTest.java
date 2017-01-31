@@ -37,11 +37,13 @@ import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.any;
 import static org.mockito.Matchers.anyBoolean;
 import static org.mockito.Matchers.anyString;
+import static org.mockito.Matchers.eq;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.anySet;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.powermock.api.mockito.PowerMockito.mockStatic;
 
 import java.io.IOException;
 import java.net.URISyntaxException;
@@ -54,6 +56,7 @@ import java.util.UUID;
 import java.util.concurrent.Future;
 
 import com.cloudera.director.azure.Configurations;
+import com.cloudera.director.azure.TestConfigHelper;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceHelper;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
@@ -92,7 +95,6 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage
 import com.cloudera.director.azure.shaded.com.microsoft.azure.utility.ResourceContext;
 import com.cloudera.director.azure.shaded.com.microsoft.windowsazure.Configuration;
 import com.cloudera.director.azure.shaded.com.microsoft.windowsazure.exception.ServiceException;
-import com.cloudera.director.azure.shaded.com.typesafe.config.Config;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
@@ -108,7 +110,7 @@ import org.powermock.modules.junit4.PowerMockRunner;
  * Mock tests for AzureComputeProvider
  */
 @RunWith(PowerMockRunner.class)
-@PrepareForTest(Configurations.class)
+@PrepareForTest({Configurations.class, AzurePluginConfigHelper.class, TaskRunner.class})
 public class AzureComputeProviderTest {
 
   private AzureComputeProvider computeProvider;
@@ -117,8 +119,7 @@ public class AzureComputeProviderTest {
   private AzureCredentials credentials;
   private LocalizationContext localizationContext;
   private AzureComputeProviderHelper computeProviderHelper;
-  private Config pluginConfig;
-  private Config configurableImages;
+  private TaskRunner taskRunner;
   private AzureComputeInstanceTemplate template;
   private String vmNamePrefix = "director";
   private String instanceId = UUID.randomUUID().toString();
@@ -161,7 +162,9 @@ public class AzureComputeProviderTest {
 
   @Before
   public void setUp() throws Exception {
-    PowerMockito.mockStatic(Configurations.class);
+    PowerMockito.spy(AzurePluginConfigHelper.class);
+
+    mockStatic(Configurations.class);
     configuration = mock(Configured.class);
     credentials = mock(AzureCredentials.class);
     context = mock(ResourceContext.class);
@@ -170,11 +173,12 @@ public class AzureComputeProviderTest {
     when(localizationContext.getLocale()).thenReturn(new Locale("en"));
     computeProviderHelper = mock(AzureComputeProviderHelper.class);
     when(credentials.getComputeProviderHelper()).thenReturn(computeProviderHelper);
-    pluginConfig = AzurePluginConfigHelper.parseConfigFromClasspath(Configurations.AZURE_CONFIG_FILENAME);
-    configurableImages = AzurePluginConfigHelper.parseConfigFromClasspath(
-      Configurations.AZURE_CONFIGURABLE_IMAGES_FILE);
-    computeProvider = new AzureComputeProvider(configuration, credentials, pluginConfig,
-      configurableImages, localizationContext);
+    taskRunner = mock(TaskRunner.class);
+    mockStatic(TaskRunner.class);
+    when(TaskRunner.build()).thenReturn(taskRunner);
+    TestConfigHelper.seedAzurePluginConfigWithDefaults();
+    computeProvider = new AzureComputeProvider(configuration, credentials,
+      localizationContext);
     azureOperationPollingTimeout = computeProvider.azureOperationPollingTimeout;
 
     when(credentials.getSubscriptionId()).thenReturn("subscription");
@@ -285,14 +289,13 @@ public class AzureComputeProviderTest {
     when(computeProviderHelper.createAzureComputeInstanceHelper(vm, credentials, resourceGroup))
       .thenReturn(mock(AzureComputeInstanceHelper.class));
 
-    Future<TaskResult> task = mock(Future.class);
-    when(task.isDone()).thenReturn(true);
-    when(task.get()).thenReturn(new TaskResult(true, null));
-    when(computeProviderHelper.submitDeleteVmTask(resourceGroup, vm, true,
-      azureOperationPollingTimeout)).thenReturn(task);
-    when(computeProviderHelper.pollPendingTask(any(Future.class), anyInt(), anyInt()))
+    when(response.isDone()).thenReturn(true);
+    when(response.get()).thenReturn(new TaskResult(true, null));
+    when(taskRunner.submitDeleteVmTask(computeProviderHelper, resourceGroup, vm, true,
+      azureOperationPollingTimeout)).thenReturn(response);
+    when(taskRunner.pollPendingTask(any(Future.class), anyInt(), anyInt()))
       .thenCallRealMethod();
-    when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
+    when(taskRunner.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
       .thenCallRealMethod();
     computeProvider.delete(template, list);
 
@@ -301,9 +304,9 @@ public class AzureComputeProviderTest {
 
   @Test
   public void testAllocateSingleVM() throws Exception {
-    when(computeProviderHelper.submitVmCreationTask(context, parameters,
+    when(taskRunner.submitVmCreationTask(computeProviderHelper, context, parameters,
       azureOperationPollingTimeout)).thenReturn(response);
-    when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
+    when(taskRunner.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
       .thenReturn(1);
 
     ArrayList list = new ArrayList();
@@ -315,7 +318,7 @@ public class AzureComputeProviderTest {
 
     computeProvider.allocate(template, list, 1);
 
-    verify(computeProviderHelper).submitVmCreationTask(context, parameters,
+    verify(taskRunner).submitVmCreationTask(computeProviderHelper, context, parameters,
       azureOperationPollingTimeout);
     assertEquals(1, computeProvider.getLastSuccessfulAllocationCount());
   }
@@ -323,17 +326,17 @@ public class AzureComputeProviderTest {
   @Test
   public void testAllocateWithInterruptedException() throws Exception {
     thrown.expect(InterruptedException.class);
-    when(computeProviderHelper.submitVmCreationTask(context, parameters,
+    when(taskRunner.submitVmCreationTask(computeProviderHelper, context, parameters,
       azureOperationPollingTimeout)).thenReturn(response);
-    when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
+    when(taskRunner.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
       .thenThrow(InterruptedException.class);
 
     ArrayList list = new ArrayList();
     list.add(instanceId);
 
     computeProvider.allocate(template, list, 1);
-    verify(computeProviderHelper).deleteResources(anyString(), anySet(), anyBoolean(),
-      anyInt());
+    verify(taskRunner).submitAndRunResourceDeleteTasks(computeProviderHelper, anyString(),
+        anySet(), anyBoolean(), anyInt());
   }
 
   @Test
@@ -361,7 +364,7 @@ public class AzureComputeProviderTest {
         when(tempResponse.get()).thenReturn(new TaskResult(true, tempContext));
       }
 
-      when(computeProviderHelper.submitVmCreationTask(tempContext, tempParameters,
+      when(taskRunner.submitVmCreationTask(computeProviderHelper, tempContext, tempParameters,
         azureOperationPollingTimeout)).thenReturn(tempResponse);
     }
 
@@ -371,17 +374,17 @@ public class AzureComputeProviderTest {
       .thenReturn(contexts.get(2))
       .thenReturn(contexts.get(3));
 
-    when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
+    when(taskRunner.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
       .thenCallRealMethod();
 
     ArgumentCaptor<Set> argumentCaptor = ArgumentCaptor.forClass(Set.class);
     computeProvider.allocate(template, instances, 3);
 
-    verify(computeProviderHelper).deleteResources(anyString(), argumentCaptor.capture(),
-      anyBoolean(), anyInt());
+    verify(taskRunner).submitAndRunResourceDeleteTasks(eq(computeProviderHelper), anyString(),
+        argumentCaptor.capture(), anyBoolean(), anyInt());
     for (int i = 0; i < 4; i++) {
-      verify(computeProviderHelper).submitVmCreationTask(contexts.get(i), parametersList.get(i),
-        azureOperationPollingTimeout);
+      verify(taskRunner).submitVmCreationTask(computeProviderHelper, contexts.get(i),
+          parametersList.get(i), azureOperationPollingTimeout);
     }
     assertEquals(expectedFailure, argumentCaptor.getValue().size());
     assertEquals(expectedSuccess, computeProvider.getLastSuccessfulAllocationCount());
@@ -392,10 +395,10 @@ public class AzureComputeProviderTest {
     throws Exception {
     thrown.expect(UnrecoverableProviderException.class);
 
-    when(computeProviderHelper.submitVmCreationTask(context, parameters,
+    when(taskRunner.submitVmCreationTask(computeProviderHelper, context, parameters,
       azureOperationPollingTimeout)).thenReturn(response);
 
-    when(computeProviderHelper.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
+    when(taskRunner.pollPendingTasks(anySet(), anyInt(), anyInt(), anySet()))
       .thenReturn(0);
     ArrayList list = new ArrayList();
     list.add(instanceId);
@@ -403,8 +406,8 @@ public class AzureComputeProviderTest {
     try {
       computeProvider.allocate(template, list, 1);
     } catch (Exception e) {
-      verify(computeProviderHelper).deleteResources(anyString(), anySet(), anyBoolean(),
-        anyInt());
+      verify(taskRunner).submitAndRunResourceDeleteTasks(eq(computeProviderHelper), anyString(),
+          anySet(), anyBoolean(), anyInt());
       throw e;
     }
   }
@@ -501,14 +504,14 @@ public class AzureComputeProviderTest {
 
   @Test
   public void testCreateNoOpInstanceTemplateValidator(){
-    PowerMockito.when(Configurations.getValidateResourcesFlag(any(Config.class))).thenReturn(false);
+    PowerMockito.when(AzurePluginConfigHelper.getValidateResourcesFlag()).thenReturn(false);
     assertEquals(DefaultConfigurationValidator.class,
       computeProvider.getResourceTemplateConfigurationValidator().getClass());
   }
 
   @Test
   public void testCreateValidInstanceTemplateValidator(){
-    PowerMockito.when(Configurations.getValidateResourcesFlag(any(Config.class))).thenReturn(true);
+    PowerMockito.when(AzurePluginConfigHelper.getValidateResourcesFlag()).thenReturn(true);
     assertEquals(AzureComputeInstanceTemplateConfigurationValidator.class,
       computeProvider.getResourceTemplateConfigurationValidator().getClass());
   }

@@ -40,9 +40,6 @@ public class AzureLauncher extends AbstractLauncher {
 
   private static final Logger LOG = LoggerFactory.getLogger(AzureLauncher.class);
 
-  private Config azurePluginConfig = null;
-  private Config configurableImages = null;
-
   public AzureLauncher() {
     super(Collections.singletonList(AzureCloudProvider.METADATA), null);
   }
@@ -65,18 +62,22 @@ public class AzureLauncher extends AbstractLauncher {
     // Read in the default azure-plugin.conf and merge it with the optional user-defined
     // azure-plugin.conf file in `configurationDirectory`, with the values in the user-defined
     // azure-plugin.conf overriding the values of the default azure-plugin.conf
-    azurePluginConfig = AzurePluginConfigHelper.mergeConfig(
+    Config azurePluginConfig = AzurePluginConfigHelper.mergeConfig(
       Configurations.AZURE_CONFIG_FILENAME,
       configurationDirectory
     );
 
     AzurePluginConfigHelper.validatePluginConfig(azurePluginConfig);
 
+    AzurePluginConfigHelper.setAzurePluginConfig(azurePluginConfig);
+
     // Repeat the process with images.conf
-    configurableImages = AzurePluginConfigHelper.mergeConfig(
+    Config configurableImages = AzurePluginConfigHelper.mergeConfig(
       Configurations.AZURE_CONFIGURABLE_IMAGES_FILE,
       configurationDirectory
     );
+
+    AzurePluginConfigHelper.setConfigurableImages(configurableImages);
   }
 
   /**
@@ -104,19 +105,18 @@ public class AzureLauncher extends AbstractLauncher {
     AzureCredentialsProvider credsProvider = new AzureCredentialsProvider();
     AzureCredentials creds = credsProvider.createCredentials(configuration, localizationContext);
 
-    if (!Configurations.getValidateCredentialsFlag(azurePluginConfig)) {
+    if (!AzurePluginConfigHelper.getValidateCredentialsFlag()) {
       LOG.info("Skipping Azure credential validation with Azure backend.");
     } else {
       // Verify the credentials by trying to get an Azure config.
       creds.createConfiguration();
     }
 
-    return new AzureCloudProvider(creds, azurePluginConfig, configurableImages,
-      localizationContext);
+    return new AzureCloudProvider(creds, localizationContext);
   }
 
   private void checkBackendOperationPollingTimeoutFromConfig() {
-    int timeout = azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_PROVIDER)
+    int timeout = AzurePluginConfigHelper.getAzurePluginConfigProviderSection()
       .getInt(Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
     int maxTimeoutValue = Configurations.TASKS_POLLING_TIMEOUT_SECONDS;
     if (timeout < 0 || timeout > maxTimeoutValue) {

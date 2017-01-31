@@ -16,8 +16,6 @@
 
 package com.cloudera.director.azure.utils;
 
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES;
-
 import com.cloudera.director.azure.AzureLauncher;
 import com.cloudera.director.azure.Configurations;
 import com.microsoft.azure.management.storage.models.AccountType;
@@ -26,6 +24,8 @@ import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigList;
 import com.typesafe.config.ConfigParseOptions;
 import com.typesafe.config.ConfigSyntax;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
@@ -36,6 +36,84 @@ import java.util.List;
  * This class provides a set of methods to read & validate Azure Director Plugin configs.
  */
 public class AzurePluginConfigHelper {
+  private static final Logger LOG = LoggerFactory.getLogger(AzurePluginConfigHelper.class);
+
+  // Static config objects
+  // azure-plugin.conf
+  private static Config azurePluginConfig = null;
+  // images.conf
+  private static Config configurableImages = null;
+
+  /**
+   * Sets the static plugin config. The plugin can only be set once, and will remain the same until
+   * Director is restarted.
+   */
+  public synchronized static void setAzurePluginConfig(Config cfg) {
+    if (azurePluginConfig == null) {
+      LOG.info("Azure Plugin Config initializing to: {}.", cfg);
+      azurePluginConfig = cfg;
+    } else {
+      LOG.warn("Azure Plugin Config was already initialized - ignoring the new config of: {}.",
+        cfg);
+    }
+  }
+
+  /**
+   * This method is only used for testing
+   */
+  public synchronized static void mergeAzurePluginConfig(Config newConfig) {
+    azurePluginConfig = newConfig.withFallback(azurePluginConfig);
+    LOG.info("Azure Plugin Config updated to: {}.", azurePluginConfig);
+  }
+
+  public synchronized static Config getAzurePluginConfig() {
+    return azurePluginConfig;
+  }
+
+  public synchronized static Config getAzurePluginConfigInstanceSection() {
+    return azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_INSTANCE);
+  }
+
+  public synchronized static Config getAzurePluginConfigProviderSection() {
+    return azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_PROVIDER);
+  }
+
+  /**
+   * Get the config value for whether to validate Azure resources
+   *
+   * @return True if resources validator at provider and instance level checks should be enforced
+   */
+  public synchronized static boolean getValidateResourcesFlag() {
+    return azurePluginConfig.getBoolean(Configurations.AZURE_VALIDATE_RESOURCES);
+  }
+
+  /**
+   * Get the config value for whether to validate Azure credentials
+   *
+   * @return True if all credential checks should be enforced
+   */
+  public synchronized static boolean getValidateCredentialsFlag() {
+    return azurePluginConfig.getBoolean(Configurations.AZURE_VALIDATE_CREDENTIALS);
+  }
+
+  /**
+   * Sets the images config. The images can only be set once, and will remain the same until
+   * Director is restarted.
+   */
+  public synchronized static void setConfigurableImages(Config cfg) {
+    if (configurableImages == null) {
+      LOG.info("Configurable Images Config initializing to: {}.", cfg);
+      configurableImages = cfg;
+    } else {
+      LOG.warn("Configurable Images Config was already initialized - ignoring the new config of: " +
+        "{}.", cfg);
+    }
+  }
+
+  public synchronized static Config getConfigurableImages() {
+    return configurableImages;
+  }
+
   /**
    * Helper to parse the specified configuration file from the classpath.
    *
@@ -76,6 +154,11 @@ public class AzurePluginConfigHelper {
       throw new RuntimeException(
         "Supported regions in the the Azure director plugin configuration is empty.");
     }
+    // Ensure provider values are present and non-null at the given path, throws RuntimeException
+    // if the value is not set or null
+    checkConfigSection(providerSection,
+      Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
+
     Config instanceSection = cfg.getConfig(Configurations.AZURE_CONFIG_INSTANCE);
     ConfigList instanceTypes = instanceSection.getList(
       Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED);
@@ -84,8 +167,21 @@ public class AzurePluginConfigHelper {
         "Supported instance types in the the Azure director plugin configuration is empty.");
     }
 
+    // Ensure instance values are present and non-null at the given path, throws RuntimeException
+    // if the value is not set or null
+    checkConfigSection(instanceSection,
+      Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX);
+    checkConfigSection(instanceSection,
+      Configurations.AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX);
+    checkConfigSection(instanceSection,
+      Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE);
+    checkConfigSection(instanceSection,
+      Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES);
+    checkConfigSection(instanceSection,
+      Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES);
+
     validateStorageAccountType(instanceSection.getStringList(
-      AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
+      Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
   }
 
   /**
@@ -142,5 +238,12 @@ public class AzurePluginConfigHelper {
     }
 
     return config;
+  }
+
+  private static void checkConfigSection(Config providerSection, String configPath) {
+    if (!providerSection.hasPath(configPath)) {
+      throw new RuntimeException(
+        "Required Section: " + configPath + " is missing or empty.");
+    }
   }
 }

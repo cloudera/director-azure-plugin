@@ -16,12 +16,11 @@
 
 package com.cloudera.director.azure;
 
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_PROVIDER;
-
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.credentials.AzureCredentialsProvider;
 import com.cloudera.director.azure.compute.provider.AzureComputeProvider;
 import com.cloudera.director.azure.compute.provider.AzureComputeProviderConfigurationValidator;
+import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
 import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
@@ -33,7 +32,6 @@ import com.cloudera.director.spi.v1.provider.ResourceProviderMetadata;
 import com.cloudera.director.spi.v1.provider.util.AbstractCloudProvider;
 import com.cloudera.director.spi.v1.provider.util.SimpleCloudProviderMetadataBuilder;
 import com.microsoft.windowsazure.management.configuration.ManagementConfiguration;
-import com.typesafe.config.Config;
 
 import java.util.Collections;
 import java.util.NoSuchElementException;
@@ -47,8 +45,6 @@ import org.slf4j.LoggerFactory;
 public class AzureCloudProvider extends AbstractCloudProvider {
 
   private AzureCredentials credentials;
-  private Config azurePluginConfig;
-  private Config configurableImages;
 
   private static final Logger LOG = LoggerFactory.getLogger(AzureCloudProvider.class);
 
@@ -67,12 +63,9 @@ public class AzureCloudProvider extends AbstractCloudProvider {
       .resourceProviderMetadata(Collections.singletonList(AzureComputeProvider.METADATA))
       .build();
 
-  public AzureCloudProvider(AzureCredentials creds, Config pluginConfig, Config configurableImages,
-                            LocalizationContext rootLocalizationContext) {
+  public AzureCloudProvider(AzureCredentials creds, LocalizationContext rootLocalizationContext) {
     super(METADATA, rootLocalizationContext);
     this.credentials = creds;
-    this.azurePluginConfig = pluginConfig;
-    this.configurableImages = configurableImages;
   }
 
   public ResourceProvider createResourceProvider(String resourceProviderId, Configured configuration) {
@@ -81,8 +74,7 @@ public class AzureCloudProvider extends AbstractCloudProvider {
       ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
       Thread.currentThread().setContextClassLoader(ManagementConfiguration.class.getClassLoader());
       try {
-        return new AzureComputeProvider(configuration, credentials, azurePluginConfig,
-          configurableImages, getLocalizationContext());
+        return new AzureComputeProvider(configuration, credentials, getLocalizationContext());
       } catch (Exception e) {
         throw new RuntimeException(e);
       } finally {
@@ -95,15 +87,14 @@ public class AzureCloudProvider extends AbstractCloudProvider {
   @Override
   protected ConfigurationValidator getResourceProviderConfigurationValidator(
     ResourceProviderMetadata resourceProviderMetadata) {
-    if (!Configurations.getValidateResourcesFlag(azurePluginConfig)) {
+    if (!AzurePluginConfigHelper.getValidateResourcesFlag()) {
       LOG.info("Skip all compute provider validator checks.");
       return resourceProviderMetadata.getProviderConfigurationValidator();
     }
 
     ConfigurationValidator providerSpecificValidator;
     if (resourceProviderMetadata.getId().equals(AzureComputeProvider.METADATA.getId())) {
-      providerSpecificValidator = new AzureComputeProviderConfigurationValidator(
-        azurePluginConfig.getConfig(AZURE_CONFIG_PROVIDER));
+      providerSpecificValidator = new AzureComputeProviderConfigurationValidator();
     } else {
       throw new NoSuchElementException("Invalid provider id: " + resourceProviderMetadata.getId());
     }

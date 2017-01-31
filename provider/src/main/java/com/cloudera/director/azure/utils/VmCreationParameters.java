@@ -63,8 +63,8 @@ public class VmCreationParameters {
    */
   public VmCreationParameters(VirtualNetwork vnet, Subnet subnet, NetworkSecurityGroup nsg,
     AvailabilitySet as, String vmSize, String vmNamePrefix, String instanceId,
-    String fqdnSuffix, String adminName, String sshPublicKey, AccountType storageAccountType, int dataDiskCount,
-    int dataDiskSizeGiB, AzureVmImageInfo imageInfo) {
+    String fqdnSuffix, String adminName, String sshPublicKey, AccountType storageAccountType,
+    int dataDiskCount, int dataDiskSizeGiB, AzureVmImageInfo imageInfo) {
     this.vnet = vnet;
     this.nsg = nsg;
     this.availabilitySet = as;

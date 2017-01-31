@@ -147,11 +147,14 @@ The `azure-plugin.conf` file defines settings that Cloudera Director uses to val
 
     ```
     supported-instances: [
+        "STANDARD_DS15_V2",
         "STANDARD_DS14",
         "STANDARD_DS14_V2"
         "STANDARD_DS13",
         "STANDARD_DS13_V2",
         "STANDARD_DS12_V2",
+        "STANDARD_GS5",
+        "STANDARD_GS4",
         "YOUR_NEW_INSTANCE"
     ]
     ```
@@ -167,8 +170,10 @@ The `azure-plugin.conf` file defines settings that Cloudera Director uses to val
 * `provider` > `azure-backend-operation-polling-timeout-second` defines the timeout in seconds for a task interacting with the Azure backend. Chances are you won't need to change this.
 * `instance` > `instance-prefix-regex` defines the regex that instances names get validated against. This will only change if Azure changes their backend. Don't change this.
 * `instance` > `dns-fqdn-suffix-regex` defines the regex that the FQDN Suffix gets validated against. This will only change if Azure changes their backend. Don't change this.
+* `instance` > `nic-name-from-vm-url-regex` defines the regex that is used to extract the Network Interface resource name from the VM information.
+* `instance` > `availability-set-name-from-vm-url-regex` defines the regex that is used to extract the Availability Set resource name from the VM information.
+* `instance` > `storage-account-name-from-vm-url-regex` defines the regex that is used to extract the StorageAccount resource name from the VM information.
 * `instance` > `azure-disallowed-usernames` defines the list of usernames disallowed by Azure. This will only change if Azure changes their backend. Don't change this.
-
 
 ## Copyright and License
 Copyright © 2016 Cloudera. Licensed under the Apache License.

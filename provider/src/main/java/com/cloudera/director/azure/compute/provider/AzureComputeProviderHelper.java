@@ -21,24 +21,17 @@ import static com.sun.xml.bind.v2.util.ClassLoaderRetriever.getClassLoader;
 import java.io.IOException;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceHelper;
-import com.cloudera.director.azure.compute.instance.TaskResult;
+import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.azure.utils.AzureVirtualMachineState;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
-import com.cloudera.director.azure.utils.VmCreationParameters;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.InstanceStatus;
 import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
@@ -118,11 +111,9 @@ public class AzureComputeProviderHelper {
   private NetworkResourceProviderClient networkResourceProviderClient;
 
   private static final Logger LOG = LoggerFactory.getLogger(AzureComputeProviderHelper.class);
-  private ExecutorService service = Executors.newCachedThreadPool();
 
   private static final String LATEST = "latest";
   private static final String PUBLIC_URL_POSTFIX = ".cloudapp.azure.com";
-  private static final int THREAD_POOL_SHUTDOWN_WAIT_TIME_SECONDS = 30;
 
   public AzureComputeProviderHelper(Configuration azureConfig) {
     this.resourceManagementClient = ResourceManagementService.create(azureConfig);
@@ -135,27 +126,6 @@ public class AzureComputeProviderHelper {
    * Private empty constructor and setter methods for testing.
    */
   private AzureComputeProviderHelper() {
-  }
-
-  /**
-   * Creates and kicks off a CreateVMTask.
-   * <p/>
-   * This function makes multiple calls to Azure backend.
-   *
-   * @param context                      Azure resource context. Stores detailed info of VM
-   *                                     supporting resources when the function returns
-   * @param parameters                   contains additional parameters used for VM creation
-   *                                     that is not in the Azure resource context
-   * @param azureOperationPollingTimeout Azure operation polling timeout specified in second
-   * @return A future of CreateVMTask
-   */
-  public Future<TaskResult> submitVmCreationTask(
-    ResourceContext context, VmCreationParameters parameters, int azureOperationPollingTimeout) {
-
-    // Create a task to request resources and create VM
-    CreateVMTask task = new CreateVMTask(context, parameters, azureOperationPollingTimeout, this);
-
-    return service.submit(task);
   }
 
   /**
@@ -557,29 +527,6 @@ public class AzureComputeProviderHelper {
   }
 
   /**
-   * Delete any VM and resource defined in contexts within the resource group.
-   * <p/>
-   * Blocks until all resources specified in contexts are deletes or if deletion thread is
-   * interrupted.
-   *
-   * @param resourceGroup                Azure resource group name
-   * @param contexts                     Azure context populated during VM allocation
-   * @param isPublicIPConfigured         was the resource provisioned with a public IP
-   * @param azureOperationPollingTimeout Azure operation polling timeout specified in second
-   * @throws InterruptedException
-   */
-  public void deleteResources(String resourceGroup, Collection<ResourceContext> contexts,
-    boolean isPublicIPConfigured, int azureOperationPollingTimeout)
-    throws InterruptedException {
-    Set<CleanUpTask> tasks = new HashSet<>();
-    for (ResourceContext context : contexts) {
-      tasks.add(new CleanUpTask(resourceGroup, context, this, isPublicIPConfigured,
-        azureOperationPollingTimeout));
-    }
-    service.invokeAll(tasks);
-  }
-
-  /**
    * Deletes a resource group.
    * <p>
    * WARNING: This will delete ALL resources (VM, storage etc) under the resource group.
@@ -651,13 +598,6 @@ public class AzureComputeProviderHelper {
     throws ServiceException, IOException, URISyntaxException {
     return computeManagementClient.getVirtualMachinesOperations().list(resourceGroup)
       .getVirtualMachines();
-  }
-
-  public Future<TaskResult> submitDeleteVmTask(String resourceGroup, VirtualMachine vm,
-    boolean isPublicIPConfigured, int azureOperationPollingTimeout) {
-    CleanUpTask toDelete = new CleanUpTask(resourceGroup, vm, this, isPublicIPConfigured,
-      azureOperationPollingTimeout);
-    return service.submit(toDelete);
   }
 
   /**
@@ -774,8 +714,8 @@ public class AzureComputeProviderHelper {
    */
   public synchronized String getNicNameFromVm(VirtualMachine vm) {
     String text = vm.getNetworkProfile().getNetworkInterfaces().get(0).getReferenceUri();
-    String patternString = ".*/providers/Microsoft.Network/networkInterfaces/(.*)";
-    Pattern pattern = Pattern.compile(patternString);
+    Pattern pattern = Pattern.compile(AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+      .getString(Configurations.AZURE_CONFIG_INSTANCE_NIC_FROM_URL_REGEX));
     Matcher matcher = pattern.matcher(text);
 
     if (matcher.matches()) {
@@ -793,8 +733,8 @@ public class AzureComputeProviderHelper {
    */
   public synchronized String getAvailabilitySetNameFromVm(VirtualMachine vm) {
     String text = vm.getAvailabilitySetReference().getReferenceUri();
-    String patternString = ".*/providers/Microsoft.Compute/availabilitySets/(.*)";
-    Pattern pattern = Pattern.compile(patternString);
+    Pattern pattern = Pattern.compile(AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+      .getString(Configurations.AZURE_CONFIG_INSTANCE_AVAILABILITY_SET_FROM_URL_REGEX));
     Matcher matcher = pattern.matcher(text);
 
     if (matcher.matches()) {
@@ -805,112 +745,18 @@ public class AzureComputeProviderHelper {
   }
 
   /**
-   * Poll a single pending task till it is complete or timeout.
-   * Used for test only.
-   *
-   * @param task             pending task to poll for completion
-   * @param durationInSecond overall timeout period
-   * @param intervalInSecond poll interval
-   * @return number of successful task (0 or 1)
-   */
-  public int pollPendingTask(Future<TaskResult> task, int durationInSecond,
-    int intervalInSecond) {
-    Set<Future<TaskResult>> operations = new HashSet<>();
-    operations.add(task);
-    return pollPendingTasks(operations, durationInSecond, intervalInSecond, null);
-  }
-
-  /**
-   * Poll pending tasks till all tasks are complete or timeout.
-   * Azure platform operation can range from minutes to one hour.
-   *
-   * @param tasks            set of submitted tasks
-   * @param durationInSecond overall timeout period
-   * @param intervalInSecond poll interval
-   * @param failedContexts   set of failed task contexts. This list contains all the contexts of
-   *                         submitted tasks. Context of a successful task is removed from this
-   *                         set. When this call returns the element in this set are the contexts
-   *                         of failed tasks.
-   * @return number of successful tasks
-   */
-  @SuppressWarnings("PMD.CollapsibleIfStatements")
-  public int pollPendingTasks(Set<Future<TaskResult>> tasks, int durationInSecond,
-    int intervalInSecond, Set<ResourceContext> failedContexts) {
-    Set<Future<TaskResult>> responses = new HashSet<>(tasks);
-    int succeededCount = 0;
-    int timerInMilliSec = durationInSecond * 1000;
-    int intervalInMilliSec = intervalInSecond * 1000;
-
-    try {
-      while (timerInMilliSec > 0 && responses.size() > 0) {
-        Set<Future<TaskResult>> dones = new HashSet<>();
-        for (Future<TaskResult> task : responses) {
-          try {
-            if (task.isDone()) {
-              dones.add(task);
-              TaskResult tr = task.get();
-              if (tr.isSuccessful()) {
-                succeededCount++;
-                // Remove successful contexts so that what remains are the failed contexts
-                if (failedContexts != null) {
-                  if (!failedContexts.remove(tr.getContex())) {
-                    LOG.error("ResourceContext {} does not exist in the submitted context list.",
-                      tr.getContex());
-                  }
-                }
-              }
-            }
-          } catch (ExecutionException e) {
-            LOG.error("Polling of pending tasks encountered an error: ", e);
-          }
-        }
-        responses.removeAll(dones);
-
-        Thread.sleep(intervalInMilliSec);
-
-        timerInMilliSec = timerInMilliSec - intervalInMilliSec;
-        LOG.debug("Polling pending tasks: remaining time = " + timerInMilliSec / 1000 +
-          " seconds.");
-      }
-    } catch (InterruptedException e) {
-      LOG.error("Polling of pending tasks was interrupted.", e);
-      shutdownTaskRunnerService();
-    }
-
-    // Terminate all tasks if we timed out.
-    if (timerInMilliSec <= 0 && responses.size() > 0) {
-      shutdownTaskRunnerService();
-    }
-
-    // Always return the succeeded task count and let the caller decide if any resources needs to be
-    // cleaned up
-    return succeededCount;
-  }
-
-  private void shutdownTaskRunnerService() {
-    LOG.debug("Shutting down task runner service.");
-    service.shutdownNow();
-    try {
-      boolean terminated = service.awaitTermination(THREAD_POOL_SHUTDOWN_WAIT_TIME_SECONDS,
-        TimeUnit.SECONDS);
-      if (terminated == false) {
-        LOG.error("Thread pool shutdown timeout elapsed before all resources were terminated");
-      }
-    } catch (InterruptedException e) {
-      LOG.error("Shutdown of thread pool was interrupted.", e);
-    }
-  }
-
-  /**
-   * Extracts StorageAccount resource name from VM information.
+   * Extracts StorageAccount resource name from VM information. The OS VHD URL is assumed to always
+   * have the following format:
+   *     https://storage_account_name.storage_endpoint_suffix/vhds/vhd_name.vhd
+   * storage_endpoint_suffix is different for sovereign clouds (or government regions)
    *
    * @param vm Azure VirtualMachine object, contains info about a particular VM
    * @return StorageAccount resource name
    */
   public synchronized String getStorageAccountFromVM(VirtualMachine vm) {
     String text = vm.getStorageProfile().getOSDisk().getVirtualHardDisk().getUri();
-    String patternString = "https://(.*)\\.blob\\.core\\.windows\\.net/.*";
-    Pattern pattern = Pattern.compile(patternString);
+    Pattern pattern = Pattern.compile(AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+      .getString(Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_FROM_URL_REGEX));
     Matcher matcher = pattern.matcher(text);
 
     if (matcher.matches()) {

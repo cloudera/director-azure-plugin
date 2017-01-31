@@ -38,7 +38,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-import com.cloudera.director.azure.Configurations;
+import com.cloudera.director.azure.TestConfigHelper;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.provider.AzureComputeProviderHelper;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
@@ -57,7 +57,6 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resources.models.ResourceGroupExtended;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.models.AccountType;
 import com.cloudera.director.azure.shaded.com.microsoft.windowsazure.exception.ServiceException;
-import com.cloudera.director.azure.shaded.com.typesafe.config.Config;
 import com.cloudera.director.azure.shaded.com.typesafe.config.ConfigFactory;
 import org.junit.After;
 import org.junit.Before;
@@ -72,8 +71,6 @@ import static org.mockito.Mockito.when;
  * Simple test to verify AzureComputeInstanceTemplateConfigurationValidatorTest class.
  */
 public class AzureComputeInstanceTemplateConfigurationValidatorTest {
-  private Config pluginConfig;
-  private Config configurableImages;
   private AzureComputeInstanceTemplateConfigurationValidator validator;
 
   private AzureComputeProviderHelper helper;
@@ -132,17 +129,13 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   @Before
   public void setUp() throws Exception {
     helper = mock(AzureComputeProviderHelper.class);
+    TestConfigHelper.seedAzurePluginConfigWithDefaults();
     virtualMachineSizeListResponse = mock(VirtualMachineSizeListResponse.class);
     credentials = mock(AzureCredentials.class);
 
     when(credentials.getComputeProviderHelper()).thenReturn(helper);
-    pluginConfig = AzurePluginConfigHelper
-      .parseConfigFromClasspath(Configurations.AZURE_CONFIG_FILENAME);
-    configurableImages = AzurePluginConfigHelper
-      .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE);
     localizationContext = new DefaultLocalizationContext(Locale.getDefault(), "");
-    validator = new AzureComputeInstanceTemplateConfigurationValidator(
-      pluginConfig.getConfig(AZURE_CONFIG_INSTANCE), configurableImages, credentials, locationEastUS);
+    validator = new AzureComputeInstanceTemplateConfigurationValidator(credentials, locationEastUS);
     validator = spy(validator);
     accumulator = new PluginExceptionConditionAccumulator();
 
@@ -250,7 +243,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   @After
   public void tearDown() throws Exception {
     helper = null;
-    pluginConfig = null;
     localizationContext = null;
     validator = null;
     accumulator = null;
@@ -1392,11 +1384,9 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
     Map<String, Map> config = new HashMap<String, Map>();
     config.put(AZURE_CONFIG_INSTANCE, new HashMap<String, List<String>>());
     config.get(AZURE_CONFIG_INSTANCE).put(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES, accountTypeConfig);
-    pluginConfig = ConfigFactory.parseMap(config);
+    AzurePluginConfigHelper.mergeAzurePluginConfig(ConfigFactory.parseMap(config));
 
-    validator = new AzureComputeInstanceTemplateConfigurationValidator(
-      pluginConfig.getConfig(AZURE_CONFIG_INSTANCE), configurableImages, credentials,
-      locationEastUS);
+    validator = new AzureComputeInstanceTemplateConfigurationValidator(credentials, locationEastUS);
     validator = spy(validator);
 
     // do the test
@@ -1453,7 +1443,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   public void checkSSHUsername_disallowedUsername_error() throws Exception {
     Map<String, String> cfgMap = new HashMap<String, String>();
 
-    for (String disallowedUsername : pluginConfig.getConfig(Configurations.AZURE_CONFIG_INSTANCE)
+    for (String disallowedUsername : AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
       .getStringList(AZURE_CONFIG_DISALLOWED_USERNAMES)) {
       cfgMap.put("sshUsername", disallowedUsername);
       validator.checkSshUsername(new SimpleConfiguration(cfgMap), accumulator, localizationContext);

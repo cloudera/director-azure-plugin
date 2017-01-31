@@ -19,8 +19,6 @@ package com.cloudera.director.azure.compute.provider;
 import static org.junit.Assert.assertEquals;
 import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
-import static org.mockito.Mockito.any;
-import static org.mockito.Mockito.anyLong;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -34,16 +32,10 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
+import com.cloudera.director.azure.TestConfigHelper;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
-import com.cloudera.director.azure.compute.instance.TaskResult;
 import com.cloudera.director.azure.utils.AzureVirtualMachineState;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.InstanceStatus;
@@ -77,6 +69,7 @@ import org.junit.rules.ExpectedException;
 
 public class AzureComputeProviderHelperTest {
   AzureComputeProviderHelper helper;
+  TaskRunner taskRunner;
   NetworkResourceProviderClient networkResourceProviderClient;
   ComputeManagementClient computeManagementClient;
   StorageManagementClient storageManagementClient;
@@ -86,7 +79,6 @@ public class AzureComputeProviderHelperTest {
   ResourceId resourceId;
   OperationResponse operationResponse;
   NetworkInterface networkInterface;
-  ExecutorService service;
   VirtualMachine vm;
 
   @Rule
@@ -99,6 +91,7 @@ public class AzureComputeProviderHelperTest {
   private String asURI = "https://azure.com/providers/Microsoft.Compute/availabilitySets/" + asName;
   private String saName = "cloudera_sa"; // sa == storage account
   private String saURI = "https://" + saName + ".blob.core.windows.net/";
+  private String saURIGov = "https://" + saName + ".core.usgovcloudapi.net/";
   private String publicIPName = "default.public.ip.com";
   private String rgName = "default_rg";
   private ResourceGroupExtended rg;
@@ -120,7 +113,9 @@ public class AzureComputeProviderHelperTest {
 
   @Before
   public void setup() throws NoSuchMethodException, IllegalAccessException,
-    InvocationTargetException, InstantiationException, NoSuchFieldException {
+    InvocationTargetException, InstantiationException, NoSuchFieldException, IOException {
+    TestConfigHelper.seedAzurePluginConfigWithDefaults();
+
     computeManagementClient = mock(ComputeManagementClient.class, RETURNS_DEEP_STUBS);
     networkResourceProviderClient = mock(NetworkResourceProviderClient.class, RETURNS_DEEP_STUBS);
     storageManagementClient = mock(StorageManagementClient.class, RETURNS_DEEP_STUBS);
@@ -131,8 +126,8 @@ public class AzureComputeProviderHelperTest {
       RETURNS_DEEP_STUBS);
     operationResponse = mock(OperationResponse.class, RETURNS_DEEP_STUBS);
     resourceId = mock(ResourceId.class, RETURNS_DEEP_STUBS);
-    service = mock(ExecutorService.class, RETURNS_DEEP_STUBS);
     helper = spy(createHelperUsingReflection());
+    taskRunner = TaskRunner.build();
     vm = mock(VirtualMachine.class, RETURNS_DEEP_STUBS);
     rg = mock(ResourceGroupExtended.class);
     vnrg = mock(ResourceGroupExtended.class);
@@ -340,209 +335,6 @@ public class AzureComputeProviderHelperTest {
 
 
   //
-  // pollPendingTasks() Tests
-  //
-
-  @Test
-  public void pollPendingTasks_validShutdownWithFailedContexts_success() throws Exception {
-    when(service.shutdownNow())
-      .thenReturn(mock(List.class));
-    when(service.awaitTermination(anyLong(), any(TimeUnit.class)))
-      .thenReturn(true);
-
-    Future<TaskResult> ftr = mock(Future.class);
-    TaskResult tr = mock(TaskResult.class);
-    ResourceContext rc = mock(ResourceContext.class);
-
-    when(ftr.isDone())
-      .thenReturn(true);
-    when(ftr.get())
-      .thenReturn(tr);
-
-    when(tr.isSuccessful())
-      .thenReturn(true);
-    when(tr.getContex())
-      .thenReturn(rc);
-
-    Set<Future<TaskResult>> tasks = new HashSet<Future<TaskResult>>();
-    tasks.add(ftr);
-    Set<ResourceContext> failedContexts = new HashSet<ResourceContext>();
-    failedContexts.add(rc);
-
-    int succeededCount = helper.pollPendingTasks(tasks, 10, 1, failedContexts);
-
-    assertEquals(1, succeededCount);
-  }
-
-  @Test
-  public void pollPendingTasks_validShutdownWithNoFailedContexts_success() throws Exception {
-    when(service.shutdownNow())
-      .thenReturn(mock(List.class));
-    when(service.awaitTermination(anyLong(), any(TimeUnit.class)))
-      .thenReturn(true);
-
-    Future<TaskResult> ftr = mock(Future.class);
-    TaskResult tr = mock(TaskResult.class);
-
-    when(ftr.isDone())
-      .thenReturn(true);
-    when(ftr.get())
-      .thenReturn(tr);
-
-    when(tr.isSuccessful())
-      .thenReturn(true);
-
-    Set<Future<TaskResult>> tasks = new HashSet<Future<TaskResult>>();
-    tasks.add(ftr);
-    Set<ResourceContext> failedContexts = null;
-
-    int succeededCount = helper.pollPendingTasks(tasks, 10, 1, failedContexts);
-
-    assertEquals(1, succeededCount);
-  }
-
-  @Test
-  public void pollPendingTasks_validShutdownWithNonexistentContexts_error() throws Exception {
-    when(service.shutdownNow())
-      .thenReturn(mock(List.class));
-    when(service.awaitTermination(anyLong(), any(TimeUnit.class)))
-      .thenReturn(true);
-
-    Future<TaskResult> ftr = mock(Future.class);
-    TaskResult tr = mock(TaskResult.class);
-
-    when(ftr.isDone())
-      .thenReturn(true);
-    when(ftr.get())
-      .thenReturn(tr);
-
-    when(tr.isSuccessful())
-      .thenReturn(true);
-
-    Set<Future<TaskResult>> tasks = new HashSet<Future<TaskResult>>();
-    tasks.add(ftr);
-    Set<ResourceContext> failedContexts = new HashSet<ResourceContext>();
-
-    int succeededCount = helper.pollPendingTasks(tasks, 10, 1, failedContexts);
-
-    assertEquals(1, succeededCount);
-  }
-
-  @Test
-  public void pollPendingTasks_invalidShutdown_ExecutionException() throws Exception {
-    when(service.shutdownNow())
-      .thenReturn(mock(List.class));
-    when(service.awaitTermination(anyLong(), any(TimeUnit.class)))
-      .thenReturn(true);
-
-    Future<TaskResult> ftr = mock(Future.class);
-    when(ftr.isDone())
-      .thenReturn(true);
-    when(ftr.get())
-      .thenThrow(new ExecutionException(null));
-
-    Set<Future<TaskResult>> tasks = new HashSet<Future<TaskResult>>();
-    tasks.add(ftr);
-    Set<ResourceContext> failedContexts = new HashSet<ResourceContext>();
-
-    int succeededCount = helper.pollPendingTasks(tasks, 10, 1, failedContexts);
-
-    assertEquals(0, succeededCount);
-  }
-
-  @Test
-  public void pollPendingTasks_invalidShutdown_InterruptedException() throws Exception {
-    when(service.shutdownNow())
-      .thenReturn(mock(List.class));
-    when(service.awaitTermination(anyLong(), any(TimeUnit.class)))
-      .thenReturn(true);
-
-    Future<TaskResult> ftr = mock(Future.class);
-    when(ftr.isDone())
-      .thenReturn(true);
-    when(ftr.get())
-      .thenThrow(new InterruptedException(null));
-
-    Set<Future<TaskResult>> tasks = new HashSet<Future<TaskResult>>();
-    tasks.add(ftr);
-    Set<ResourceContext> failedContexts = new HashSet<ResourceContext>();
-
-    int succeededCount = helper.pollPendingTasks(tasks, 10, 1, failedContexts);
-
-    assertEquals(0, succeededCount);
-  }
-
-  @Test
-  public void pollPendingTasks_timeOut_terminateAllTasks() throws Exception {
-    when(service.shutdownNow())
-      .thenReturn(mock(List.class));
-    when(service.awaitTermination(anyLong(), any(TimeUnit.class)))
-      .thenReturn(true);
-
-    Future<TaskResult> ftr = mock(Future.class);
-    TaskResult tr = mock(TaskResult.class);
-    ResourceContext rc = mock(ResourceContext.class);
-
-    when(ftr.isDone())
-      .thenReturn(true);
-    when(ftr.get())
-      .thenReturn(tr);
-
-    when(tr.isSuccessful())
-      .thenReturn(true);
-    when(tr.getContex())
-      .thenReturn(rc);
-
-    Set<Future<TaskResult>> tasks = new HashSet<Future<TaskResult>>();
-    tasks.add(ftr);
-    Set<ResourceContext> failedContexts = new HashSet<ResourceContext>();
-    failedContexts.add(rc);
-
-    int succeededCount = helper.pollPendingTasks(tasks, 0, 1, failedContexts);
-
-    assertEquals(0, succeededCount);
-  }
-
-
-  //
-  // shutdownTaskRunnerService() Tests
-  //
-
-  @Test
-  public void shutdownTaskRunnerService_elapsedTimeoutShutdown_error() throws Exception {
-    when(service.shutdownNow())
-      .thenReturn(mock(List.class));
-    when(service.awaitTermination(anyLong(), any(TimeUnit.class)))
-      .thenReturn(false);
-
-    Class clazz = AzureComputeProviderHelper.class;
-    Method method = clazz.getDeclaredMethod("shutdownTaskRunnerService");
-    method.setAccessible(true);
-
-    method.invoke(helper);
-
-    verify(service).awaitTermination(anyLong(), any(TimeUnit.class));
-  }
-
-  @Test
-  public void shutdownTaskRunnerService_interruptedShutdown_InterruptedExceptionCaught()
-    throws Exception {
-    when(service.shutdownNow())
-      .thenReturn(mock(List.class));
-    when(service.awaitTermination(anyLong(), any(TimeUnit.class)))
-      .thenThrow(new InterruptedException());
-
-    Class clazz = AzureComputeProviderHelper.class;
-    Method method = clazz.getDeclaredMethod("shutdownTaskRunnerService");
-    method.setAccessible(true);
-
-    method.invoke(helper);
-
-    verify(service).awaitTermination(anyLong(), any(TimeUnit.class));
-  }
-
-
-  //
   // getStorageAccountFromVM() Tests
   //
 
@@ -550,6 +342,14 @@ public class AzureComputeProviderHelperTest {
   public void getStorageAccountFromVM_validInput_returnsValidMatch() throws Exception {
     when(vm.getStorageProfile().getOSDisk().getVirtualHardDisk().getUri())
       .thenReturn(saURI);
+
+    assertEquals(helper.getStorageAccountFromVM(vm), saName);
+  }
+
+  @Test
+  public void getStorageAccountFromVM_validInput_returnsValidMatch_gov() throws Exception {
+    when(vm.getStorageProfile().getOSDisk().getVirtualHardDisk().getUri())
+        .thenReturn(saURIGov);
 
     assertEquals(helper.getStorageAccountFromVM(vm), saName);
   }
@@ -905,10 +705,6 @@ public class AzureComputeProviderHelperTest {
     Field resourceManagementClientField = helperClazz.getDeclaredField("resourceManagementClient");
     resourceManagementClientField.setAccessible(true);
     resourceManagementClientField.set(obj, resourceManagementClient);
-
-    Field executorServiceField = helperClazz.getDeclaredField("service");
-    executorServiceField.setAccessible(true);
-    executorServiceField.set(obj, service);
 
     return obj;
   }

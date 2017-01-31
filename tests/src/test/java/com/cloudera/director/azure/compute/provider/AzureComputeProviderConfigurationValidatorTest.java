@@ -24,7 +24,6 @@ import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
 import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.azure.shaded.com.typesafe.config.Config;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -33,14 +32,12 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_PROVIDER;
 import static org.junit.Assert.assertTrue;
 
 /**
  * Simple test to verify AzureComputeProviderConfigurationValidatorTest class.
  */
 public class AzureComputeProviderConfigurationValidatorTest {
-  private Config pluginConfig;
   private LocalizationContext localizationContext;
   private TestConfigHelper cfgHelper = new TestConfigHelper();
   private ConfigurationValidator validator;
@@ -48,15 +45,15 @@ public class AzureComputeProviderConfigurationValidatorTest {
 
   @Before
   public void setUp() throws Exception {
-    pluginConfig = AzurePluginConfigHelper.parseConfigFromClasspath(Configurations.AZURE_CONFIG_FILENAME);
+    TestConfigHelper.seedAzurePluginConfigWithDefaults();
+
     localizationContext= new DefaultLocalizationContext(Locale.getDefault(), "");
-    validator = new AzureComputeProviderConfigurationValidator(pluginConfig.getConfig(AZURE_CONFIG_PROVIDER));
+    validator = new AzureComputeProviderConfigurationValidator();
     accumulator = new PluginExceptionConditionAccumulator();
   }
 
   @After
   public void tearDown() throws Exception {
-    pluginConfig = null;
     localizationContext= null;
     validator = null;
     accumulator = null;

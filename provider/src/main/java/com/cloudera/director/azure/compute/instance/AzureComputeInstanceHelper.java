@@ -166,8 +166,10 @@ public class AzureComputeInstanceHelper {
 
     if (isPublic) {
       if (ipConfig.getPublicIpAddress() != null) {
-        return InetAddress
-          .getByName(getPublicIP(ipConfig, networkResourceProviderClient).getIpAddress());
+        String ipAddress = getPublicIP(ipConfig, networkResourceProviderClient).getIpAddress();
+        // When VM is de-allocated, public IP Address resource will be present but the IP address
+        // be null. InetAddress.getByName() will interpret null address to loopback (127.0.0.1).
+        return (ipAddress == null) ? null : InetAddress.getByName(ipAddress);
       } else {
         LOG.info("Public IP is not configured for VM {}.", vm.getName());
         return null;

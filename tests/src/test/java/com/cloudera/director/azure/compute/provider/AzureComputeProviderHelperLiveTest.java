@@ -29,6 +29,7 @@ import com.cloudera.director.azure.TestConfigHelper;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceHelper;
 import com.cloudera.director.azure.compute.instance.TaskResult;
+import com.cloudera.director.spi.v1.model.InstanceStatus;
 import com.cloudera.director.azure.utils.VmCreationParameters;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.ComputeManagementClient;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.ComputeManagementService;
@@ -68,6 +69,7 @@ public class AzureComputeProviderHelperLiveTest {
   private Configuration config;
   private ComputeManagementClient computeManagementClient;
   private AzureComputeProviderHelper helper;
+  private TaskRunner taskRunner;
   private String vmNamePrefix;
   private String instanceId;
   private String vmName;
@@ -94,11 +96,14 @@ public class AzureComputeProviderHelperLiveTest {
 
   @Before
   public void setup() throws Exception {
+    TestConfigHelper.seedAzurePluginConfigWithDefaults();
+
     cfgHelper = new TestConfigHelper();
     cred = cfgHelper.getAzureCredentials();
     config = cred.createConfiguration();
     computeManagementClient = ComputeManagementService.create(config);
     helper = new AzureComputeProviderHelper(config);
+    taskRunner = TaskRunner.build();
 
     vmNamePrefix = "test";
     instanceId = UUID.randomUUID().toString();
@@ -168,10 +173,10 @@ public class AzureComputeProviderHelperLiveTest {
       vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
       TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
       dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
-    Future<TaskResult> vmr = helper.submitVmCreationTask(
-      context, parameters, azureOperationPollingTimeout);
+    Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
 
-    helper.pollPendingTask(vmr, 1800, 10);
+    taskRunner.pollPendingTask(vmr, 1800, 10);
     LOG.info("VM {} is created.", vmName);
 
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
@@ -185,10 +190,10 @@ public class AzureComputeProviderHelperLiveTest {
 
     LOG.info("Start delete VM {}.", vmName);
 
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
-      true, azureOperationPollingTimeout);
+    Future<TaskResult> deleteTask = taskRunner.submitDeleteVmTask(helper,
+        context.getResourceGroupName(), vm,true, azureOperationPollingTimeout);
 
-    helper.pollPendingTask(deleteTask, 1800, 10);
+    taskRunner.pollPendingTask(deleteTask, 1800, 10);
 
     // Verify VM has been deleted by trying to find it again, should hit Azure service exception
     boolean hitException = false;
@@ -220,10 +225,10 @@ public class AzureComputeProviderHelperLiveTest {
       vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
       TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
       dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
-    Future<TaskResult> vmr = helper.submitVmCreationTask(
-      context, parameters, azureOperationPollingTimeout);
+    Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
 
-    helper.pollPendingTask(vmr, 1800, 10);
+    taskRunner.pollPendingTask(vmr, 1800, 10);
     LOG.info("VM {} is created.", vmName);
 
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
@@ -237,10 +242,10 @@ public class AzureComputeProviderHelperLiveTest {
 
     LOG.info("Start delete VM {}.", vmName);
 
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
-      true, azureOperationPollingTimeout);
+    Future<TaskResult> deleteTask = taskRunner.submitDeleteVmTask(helper,
+        context.getResourceGroupName(), vm,true, azureOperationPollingTimeout);
 
-    helper.pollPendingTask(deleteTask, 1800, 10);
+    taskRunner.pollPendingTask(deleteTask, 1800, 10);
 
     // Verify VM has been deleted by trying to find it again, should hit Azure service exception
     boolean hitException = false;
@@ -274,11 +279,11 @@ public class AzureComputeProviderHelperLiveTest {
       vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
       TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
       dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
-    Future<TaskResult> vmr = helper.submitVmCreationTask(
-      context, parameters, azureOperationPollingTimeout);
+    Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
 
     // verify that the vm has been successfully created
-    assertEquals(1, helper.pollPendingTask(vmr, 1800, 10));
+    assertEquals(1, taskRunner.pollPendingTask(vmr, 1800, 10));
 
     LOG.info("VM {} is created.", vmName);
     assertEquals(InstanceStatus.RUNNING, helper.getVirtualMachineStatus(resourceGroup, vmName)
@@ -287,11 +292,11 @@ public class AzureComputeProviderHelperLiveTest {
     LOG.info("Start (second of two) create VM {}.", vmName);
 
     // idempotent test
-    Future<TaskResult> vmrTwo = helper.submitVmCreationTask(
-      context, parameters, azureOperationPollingTimeout);
+    Future<TaskResult> vmrTwo = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
 
-    //verify that a second submitVmCreationTask() with the same parameters doesn't error out
-    helper.pollPendingTask(vmrTwo, 1800, 10);
+    // verify that a second submitVmCreationTask() with the same parameters doesn't error out
+    taskRunner.pollPendingTask(vmrTwo, 1800, 10);
     assertEquals(InstanceStatus.RUNNING, helper.getVirtualMachineStatus(resourceGroup, vmName)
       .getInstanceStatus());
     // wait a little before deleting the VM and its supporting resources.
@@ -301,10 +306,10 @@ public class AzureComputeProviderHelperLiveTest {
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations()
       .getWithInstanceView(cfgHelper.getTestResourceGroup(), vmName)
       .getVirtualMachine();
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
-      true, azureOperationPollingTimeout);
+    Future<TaskResult> deleteTask = taskRunner.submitDeleteVmTask(helper,
+        context.getResourceGroupName(), vm,true, azureOperationPollingTimeout);
 
-    helper.pollPendingTask(deleteTask, 1800, 10);
+    taskRunner.pollPendingTask(deleteTask, 1800, 10);
 
     // Verify VM has been deleted by trying to find it again, should hit Azure service exception
     boolean hitException = false;
@@ -330,10 +335,10 @@ public class AzureComputeProviderHelperLiveTest {
       vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
       TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
       dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
-    Future<TaskResult> vmr = helper.submitVmCreationTask(
-      context, parameters, azureOperationPollingTimeout);
+    Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
 
-    helper.pollPendingTask(vmr, 1800, 10);
+    taskRunner.pollPendingTask(vmr, 1800, 10);
     LOG.info("VM {} is created.", vmName);
 
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
@@ -347,11 +352,11 @@ public class AzureComputeProviderHelperLiveTest {
 
     LOG.info("Start delete vm " + vmName);
 
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
-      true, azureOperationPollingTimeout);
+    Future<TaskResult> deleteTask = taskRunner.submitDeleteVmTask(helper,
+        context.getResourceGroupName(), vm,true, azureOperationPollingTimeout);
 
     // the vm should be deleted
-    assertEquals(1, helper.pollPendingTask(deleteTask, 1800, 10));
+    assertEquals(1, taskRunner.pollPendingTask(deleteTask, 1800, 10));
 
     // Verify VM has been deleted by trying to find it again, should hit Azure service exception
     boolean hitException = false;
@@ -369,11 +374,11 @@ public class AzureComputeProviderHelperLiveTest {
 
     LOG.info("VM {} deleted.", vmName);
 
-    Future<TaskResult> deleteAgain = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
-      true, azureOperationPollingTimeout);
+    Future<TaskResult> deleteAgain = taskRunner.submitDeleteVmTask(helper,
+        context.getResourceGroupName(), vm,true, azureOperationPollingTimeout);
 
     // nothing should be deleted as it's already been deleted once
-    assertEquals(0, helper.pollPendingTask(deleteAgain, 1800, 10));
+    assertEquals(0, taskRunner.pollPendingTask(deleteAgain, 1800, 10));
 
     // Verify VM has been deleted by trying to find it again, should hit Azure service exception
     hitException = false;
@@ -405,10 +410,10 @@ public class AzureComputeProviderHelperLiveTest {
       vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
       TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
       dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
-    Future<TaskResult> vmr = helper.submitVmCreationTask(
-      context, parameters, azureOperationPollingTimeout);
+    Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
 
-    helper.pollPendingTask(vmr, 1800, 10);
+    taskRunner.pollPendingTask(vmr, 1800, 10);
     LOG.info("VM {} is created.", vmName);
 
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations().getWithInstanceView(
@@ -418,10 +423,10 @@ public class AzureComputeProviderHelperLiveTest {
 
     LOG.info("Start delete VM {}.", vmName);
 
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
-      true, azureOperationPollingTimeout);
+    Future<TaskResult> deleteTask = taskRunner.submitDeleteVmTask(helper,
+        context.getResourceGroupName(), vm,true, azureOperationPollingTimeout);
 
-    helper.pollPendingTask(deleteTask, 1800, 10);
+    taskRunner.pollPendingTask(deleteTask, 1800, 10);
 
     // Verify VM has been deleted by trying to find it again, should hit Azure service exception
     boolean hitException = false;
@@ -460,10 +465,10 @@ public class AzureComputeProviderHelperLiveTest {
       vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
       TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
       dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
-    Future<TaskResult> vmr = helper.submitVmCreationTask(
-      context, parameters, azureOperationPollingTimeout);
+    Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
 
-    helper.pollPendingTask(vmr, 1800, 10);
+    taskRunner.pollPendingTask(vmr, 1800, 10);
     LOG.info("VM {} is created.", vmName);
 
     VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations()
@@ -510,10 +515,10 @@ public class AzureComputeProviderHelperLiveTest {
 
     LOG.info("Start delete VM {}.", vmName);
 
-    Future<TaskResult> deleteTask = helper.submitDeleteVmTask(context.getResourceGroupName(), vm,
-      true, azureOperationPollingTimeout);
+    Future<TaskResult> deleteTask = taskRunner.submitDeleteVmTask(helper,
+        context.getResourceGroupName(), vm,true, azureOperationPollingTimeout);
 
-    helper.pollPendingTask(deleteTask, 1800, 10);
+    taskRunner.pollPendingTask(deleteTask, 1800, 10);
   }
 
   /**
@@ -546,10 +551,10 @@ public class AzureComputeProviderHelperLiveTest {
       vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
       TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
       dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
-    Future<TaskResult> vmr = helper.submitVmCreationTask(
-      context, parameters, azureOperationPollingTimeout);
+    Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
 
-    helper.pollPendingTask(vmr, 1800, 10);
+    taskRunner.pollPendingTask(vmr, 1800, 10);
     LOG.info("VM {} is created.", vmName);
 
     assertEquals(InstanceStatus.RUNNING, helper.getVirtualMachineStatus(rgName, vmName)

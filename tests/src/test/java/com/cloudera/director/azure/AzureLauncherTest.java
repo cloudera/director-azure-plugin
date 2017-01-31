@@ -37,7 +37,7 @@ import java.util.Map;
 
 import static junit.framework.Assert.assertEquals;
 import static org.mockito.Matchers.any;
-import static org.powermock.api.mockito.PowerMockito.doReturn;
+import static org.powermock.api.mockito.PowerMockito.when;
 
 /**
  * Local Unit Tests + One Live Test to verify AzureLauncher.
@@ -51,7 +51,7 @@ public class AzureLauncherTest {
   Map cfgMap;
 
   @Before
-  public void setUp(){
+  public void setUp() {
     PowerMockito.spy(AzurePluginConfigHelper.class);
     launcher = new AzureLauncher();
     launcher.initialize(null, null);
@@ -73,7 +73,8 @@ public class AzureLauncherTest {
    */
   @Test
   public void testCreateCloudProviderWithoutCredentialCheck() throws Exception {
-    doReturn(false).when(Configurations.class, "getValidateCredentialsFlag", any(Config.class));
+    when(AzurePluginConfigHelper.getValidateCredentialsFlag()).thenReturn(false);
+
     CloudProvider cloudProvider = launcher.createCloudProvider(
       AzureCloudProvider.ID,
       new SimpleConfiguration(cfgMap),
@@ -100,7 +101,7 @@ public class AzureLauncherTest {
       LOG.info("Skipping the test case because Live Test flag is OFF.");
       return;
     }
-    doReturn(true).when(Configurations.class, "getValidateCredentialsFlag", any(Config.class));
+    when(AzurePluginConfigHelper.getValidateCredentialsFlag()).thenReturn(true);
 
     // WARNING This actually reaches out to Azure backend
     try {

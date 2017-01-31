@@ -20,10 +20,12 @@ import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty;
 import com.cloudera.director.azure.compute.provider.AzureComputeProviderConfigurationProperty;
+import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
 import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -230,4 +232,14 @@ public class TestConfigHelper {
    * @return the official RHEL 6.7 image info
    */
   public AzureVmImageInfo getOfficialRhel67ImageInfo() { return this.officialRhel67ImageInfo; }
+
+  /**
+   * Seed AzurePluginConfigHelper with the default contents of `azure-plugin.conf` and `images.conf`
+   */
+  public static void seedAzurePluginConfigWithDefaults() throws IOException {
+    AzurePluginConfigHelper.setAzurePluginConfig(
+      AzurePluginConfigHelper.parseConfigFromClasspath(Configurations.AZURE_CONFIG_FILENAME));
+    AzurePluginConfigHelper.setConfigurableImages(AzurePluginConfigHelper
+      .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE));
+  }
 }

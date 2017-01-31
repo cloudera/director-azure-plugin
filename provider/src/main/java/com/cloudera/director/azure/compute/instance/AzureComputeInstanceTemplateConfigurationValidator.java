@@ -16,9 +16,9 @@
 
 package com.cloudera.director.azure.compute.instance;
 
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES;
 import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE;
 import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES;
+import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES;
 import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX;
 import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX;
 import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES;
@@ -30,6 +30,7 @@ import static com.cloudera.director.spi.v1.model.util.Validations.addError;
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.provider.AzureComputeProviderHelper;
+import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.azure.utils.AzureVmImageInfo;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
@@ -67,7 +68,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
   private static final Logger LOG =
     LoggerFactory.getLogger(AzureComputeInstanceTemplateConfigurationValidator.class);
 
-  private Config pluginConfig;
+  private Config pluginConfigInstanceSection;
   private Config configurableImages;
   private AzureCredentials credentials; // Credential to do Azure specific validations
 
@@ -145,19 +146,16 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
   static final String GENERIC_MSG = "Exception occurred during validation";
 
   /**
-   * @param providerSectionPluginConfig "provider" section in the plugin config
-   * @param configurableImages          config object containing list of configurable images
    * @param credentials                 credential object to get helper for Azure SDK calls
    * @param location                    deployment location/region
    */
   public AzureComputeInstanceTemplateConfigurationValidator(
-    Config providerSectionPluginConfig,
-    Config configurableImages,
     AzureCredentials credentials, String location) {
-    this.pluginConfig = providerSectionPluginConfig;
-    this.configurableImages = configurableImages;
     this.credentials = credentials;
     this.location = location;
+    this.pluginConfigInstanceSection = AzurePluginConfigHelper
+      .getAzurePluginConfigInstanceSection();
+    this.configurableImages = AzurePluginConfigHelper.getConfigurableImages();
   }
 
   /**
@@ -217,7 +215,8 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     String vmSize = directorConfig.getConfigurationValue(
       AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, localizationContext);
 
-    if (!pluginConfig.getStringList(AZURE_CONFIG_INSTANCE_SUPPORTED).contains(vmSize)) {
+    if (!pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_SUPPORTED)
+      .contains(vmSize)) {
       LOG.error(String.format(VIRTUAL_MACHINE_MSG, vmSize));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
         localizationContext, null, VIRTUAL_MACHINE_MSG, vmSize);
@@ -376,7 +375,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     LocalizationContext localizationContext) {
     String suffix = directorConfig.getConfigurationValue(
       AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX, localizationContext);
-    String regex = pluginConfig.getString(AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX);
+    String regex = pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX);
     Pattern pattern = Pattern.compile(regex);
     Matcher matcher = pattern.matcher(suffix);
 
@@ -501,7 +500,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
       // normalize the list
       Set<String> clouderaSupportedVMSizes = new HashSet<>();
-      for (String vm : pluginConfig.getStringList(AZURE_CONFIG_INSTANCE_SUPPORTED)) {
+      for (String vm : pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_SUPPORTED)) {
         clouderaSupportedVMSizes.add(vm.toUpperCase());
       }
 
@@ -550,7 +549,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     String instancePrefix = directorConfig.getConfigurationValue(
       InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX,
       localizationContext);
-    String regex = pluginConfig.getString(AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX);
+    String regex = pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX);
     Pattern pattern = Pattern.compile(regex);
     Matcher matcher = pattern.matcher(instancePrefix);
 
@@ -571,8 +570,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
    * @param localizationContext localization context to extract config
    */
   void checkVmImage(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext,
-    AzureComputeProviderHelper helper) {
+    LocalizationContext localizationContext, AzureComputeProviderHelper helper) {
     String imageName = directorConfig.getConfigurationValue(IMAGE, localizationContext);
     Config imageCfg;
     try {
@@ -662,13 +660,13 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       AzureComputeInstanceTemplateConfigurationProperty.STORAGE_ACCOUNT_TYPE, localizationContext);
 
     // validate that the storage account type (PremiumLRS by default) exists in azure-plugin.conf
-    if (!pluginConfig.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)
+    if (!pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)
       .contains(storageAccountType)) {
       LOG.error(String.format(STORAGE_ACCOUNT_TYPES_MSG, storageAccountType,
-        pluginConfig.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)));
+        pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.STORAGE_ACCOUNT_TYPE,
         localizationContext, null, STORAGE_ACCOUNT_TYPES_MSG, storageAccountType,
-        pluginConfig.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
+        pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
 
       // don't do any more checks if this check fails
       return;
@@ -699,13 +697,13 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       // VM(s) will not be provisioned and a ServiceException and message will be in Director logs.
 
       // validate that the disk size exists in azure-plugin.conf
-      if (!pluginConfig.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)
+      if (!pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)
         .contains(diskSize)) {
         LOG.error(String.format(PREMIUM_DISK_SIZE_MISSING_IN_CONFIG_MSG, diskSize,
-          pluginConfig.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)));
+          pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
           localizationContext, null, PREMIUM_DISK_SIZE_MISSING_IN_CONFIG_MSG, diskSize,
-          pluginConfig.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES));
+          pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES));
       }
     } else if (storageAccountType.equals(AccountType.StandardLRS.toString())) {
       // The min is 1GB, the max is currently 1023 configurable by changing azure-plugin.conf. If
@@ -719,12 +717,12 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
           localizationContext, null, STANDARD_DISK_SIZE_LESS_THAN_MIN_MSG, diskSize);
       } else if (diskSizeGB > Integer.parseInt(
-        pluginConfig.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE))) {
+        pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE))) {
         LOG.error(String.format(STANDARD_DISK_SIZE_GREATER_THAN_MAX_MSG, diskSize,
-          pluginConfig.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE)));
+          pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE)));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
           localizationContext, null, STANDARD_DISK_SIZE_GREATER_THAN_MAX_MSG, diskSize,
-          pluginConfig.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE));
+          pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE));
       }
     } else {
       // if it's not part of the default list don't do any size validations
@@ -744,7 +742,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
     String sshUsername = directorConfig.getConfigurationValue(SSH_USERNAME, localizationContext);
     List<String> disallowedUsernames =
-      pluginConfig.getStringList(AZURE_CONFIG_DISALLOWED_USERNAMES);
+      pluginConfigInstanceSection.getStringList(AZURE_CONFIG_DISALLOWED_USERNAMES);
 
     if (disallowedUsernames.contains(sshUsername)) {
       LOG.error(String.format(DISALLOWED_USERNAMES_DETAILED_MSG, sshUsername,

@@ -17,13 +17,12 @@
 package com.cloudera.director.azure;
 
 import static org.junit.Assert.assertEquals;
-import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
 import static org.powermock.api.mockito.PowerMockito.when;
 
-
 import java.util.Locale;
 
+import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.provider.Launcher;
@@ -40,7 +39,7 @@ import org.powermock.modules.junit4.PowerMockRunner;
  * Tests to verify the expected behavior of AzureCloudProvider
  */
 @RunWith(PowerMockRunner.class)
-@PrepareForTest(Configurations.class)
+@PrepareForTest({Configurations.class, AzurePluginConfigHelper.class})
 public class AzureCloudProviderTest {
 
   private AzureCloudProvider clouderaProvider;
@@ -57,16 +56,14 @@ public class AzureCloudProviderTest {
     when(resourceProviderMetadata.getProviderConfigurationValidator()).thenReturn(validator);
 
     PowerMockito.mockStatic(Configurations.class);
+    PowerMockito.mockStatic(AzurePluginConfigHelper.class);
 
-    clouderaProvider = new AzureCloudProvider(null,
-      null,
-      null,
-      localizationContext);
+    clouderaProvider = new AzureCloudProvider(null, localizationContext);
   }
 
   @Test
   public void testSkipValidatorForAzureClouderaProvider() throws Exception {
-    when(Configurations.getValidateResourcesFlag(any(Config.class))).thenReturn(false);
+    when(AzurePluginConfigHelper.getValidateResourcesFlag()).thenReturn(false);
     assertEquals("Should get a mock Object back instead of trying to create a validate one",
       validator, clouderaProvider.getResourceProviderConfigurationValidator(
         resourceProviderMetadata));
@@ -74,7 +71,7 @@ public class AzureCloudProviderTest {
 
   @Test(expected = NullPointerException.class)
   public void testEnforceValidatorForAzureClouderaProvider() throws Exception {
-    when(Configurations.getValidateResourcesFlag(any(Config.class))).thenReturn(true);
+    when(AzurePluginConfigHelper.getValidateResourcesFlag()).thenReturn(true);
     //should throw NullPointerException due to validating
     clouderaProvider.getResourceProviderConfigurationValidator(resourceProviderMetadata);
   }
