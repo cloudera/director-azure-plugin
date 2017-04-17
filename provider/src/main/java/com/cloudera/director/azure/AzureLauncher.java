@@ -30,15 +30,10 @@ import java.io.File;
 import java.util.Collections;
 import java.util.Locale;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * Azure plugin launcher.
  */
 public class AzureLauncher extends AbstractLauncher {
-
-  private static final Logger LOG = LoggerFactory.getLogger(AzureLauncher.class);
 
   public AzureLauncher() {
     super(Collections.singletonList(AzureCloudProvider.METADATA), null);
@@ -81,8 +76,7 @@ public class AzureLauncher extends AbstractLauncher {
   }
 
   /**
-   * Creates a cloud provider object. Also verifies the credentials provider in config before
-   * creating the provider object.
+   * Creates a cloud provider object.
    *
    * @param cloudProviderId cloud provider id
    * @param configuration   director config
@@ -104,13 +98,6 @@ public class AzureLauncher extends AbstractLauncher {
     // Get Azure credentials
     AzureCredentialsProvider credsProvider = new AzureCredentialsProvider();
     AzureCredentials creds = credsProvider.createCredentials(configuration, localizationContext);
-
-    if (!AzurePluginConfigHelper.getValidateCredentialsFlag()) {
-      LOG.info("Skipping Azure credential validation with Azure backend.");
-    } else {
-      // Verify the credentials by trying to get an Azure config.
-      creds.createConfiguration();
-    }
 
     return new AzureCloudProvider(creds, localizationContext);
   }

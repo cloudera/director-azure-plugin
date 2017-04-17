@@ -51,6 +51,7 @@ import com.microsoft.azure.management.compute.models.ImageReference;
 import com.microsoft.azure.management.compute.models.InstanceViewStatus;
 import com.microsoft.azure.management.compute.models.LinuxConfiguration;
 import com.microsoft.azure.management.compute.models.OSProfile;
+import com.microsoft.azure.management.compute.models.Plan;
 import com.microsoft.azure.management.compute.models.PurchasePlan;
 import com.microsoft.azure.management.compute.models.SshConfiguration;
 import com.microsoft.azure.management.compute.models.SshPublicKey;
@@ -64,6 +65,7 @@ import com.microsoft.azure.management.compute.models.VirtualMachineSizeListRespo
 import com.microsoft.azure.management.network.NetworkResourceProviderClient;
 import com.microsoft.azure.management.network.NetworkResourceProviderService;
 import com.microsoft.azure.management.network.models.AzureAsyncOperationResponse;
+import com.microsoft.azure.management.network.models.IpAllocationMethod;
 import com.microsoft.azure.management.network.models.NetworkInterface;
 import com.microsoft.azure.management.network.models.NetworkInterfaceGetResponse;
 import com.microsoft.azure.management.network.models.NetworkInterfaceIpConfiguration;
@@ -71,7 +73,6 @@ import com.microsoft.azure.management.network.models.NetworkSecurityGroup;
 import com.microsoft.azure.management.network.models.OperationStatus;
 import com.microsoft.azure.management.network.models.PublicIpAddress;
 import com.microsoft.azure.management.network.models.PublicIpAddressDnsSettings;
-import com.microsoft.azure.management.network.models.PublicIpAddressGetResponse;
 import com.microsoft.azure.management.network.models.ResourceId;
 import com.microsoft.azure.management.network.models.Subnet;
 import com.microsoft.azure.management.network.models.VirtualNetwork;
@@ -113,7 +114,6 @@ public class AzureComputeProviderHelper {
   private static final Logger LOG = LoggerFactory.getLogger(AzureComputeProviderHelper.class);
 
   private static final String LATEST = "latest";
-  private static final String PUBLIC_URL_POSTFIX = ".cloudapp.azure.com";
 
   public AzureComputeProviderHelper(Configuration azureConfig) {
     this.resourceManagementClient = ResourceManagementService.create(azureConfig);
@@ -141,72 +141,6 @@ public class AzureComputeProviderHelper {
    */
   public static String getShortVMName(String vmNamePrefix, String instanceId) {
     return vmNamePrefix + "-" + instanceId.substring(0, 8);
-  }
-
-  /**
-   * Constructs the VM FQDN.
-   * FQDN format: [vmShortName].[regionName].[Azure public URL postfix]
-   * <p/>
-   * Cloudera requires using FQDN as host names.
-   *
-   * @param vmShortName a shortened version of the vm name in the following format:
-   *                    [user defined vm name prefix]-[first 8 characters of the instance id (UUID)]
-   * @param regionName  name of region (e.g. uswest) where the VM resides
-   * @return public FQDN of a VM
-   * @see <a href="http://www.cloudera.com/documentation/enterprise/latest/topics/cdh_ig_networknames_configure.html" />
-   */
-  private String getPublicFqdn(String vmShortName, String regionName) {
-    return vmShortName + "." + regionName + PUBLIC_URL_POSTFIX;
-  }
-
-  /**
-   * Sets the public IP DNS label plus both forward & reverse FQDN.
-   *
-   * @param context     Azure ResourceContext object. It contains old info without DNS settings
-   * @param vmShortName a shortened version of the vm name in the following format:
-   *                    [user defined vm name prefix]-[first 8 characters of the instance id (UUID)]
-   * @throws Exception various Azure backend calls could fail
-   */
-  public synchronized void setPublicDNSInfo(ResourceContext context, String vmShortName)
-    throws IOException, ServiceException, InterruptedException, ExecutionException {
-    String vmName = context.getVMInput().getName();
-
-    // Get latest PIP info
-    PublicIpAddressGetResponse resp = networkResourceProviderClient.getPublicIpAddressesOperations()
-      .get(context.getResourceGroupName(), context.getPublicIpAddress().getName());
-    PublicIpAddress pip = resp.getPublicIpAddress();
-    if (pip == null) {
-      throw new TransientProviderException("Failed to get public IP config for VM: " +
-        vmName + ".");
-    }
-
-    LOG.debug("Successfully retrieved public IP: {}.", pip.getName());
-
-    PublicIpAddressDnsSettings dnsSettings = pip.getDnsSettings();
-    if (dnsSettings == null) {
-      LOG.debug("DNS settings is NULL, create a new one.");
-      dnsSettings = new PublicIpAddressDnsSettings();
-    }
-
-    String fqdn = getPublicFqdn(vmShortName, context.getLocation().toLowerCase());
-    LOG.debug("Public DNS FQDN is: {}.", fqdn);
-
-    dnsSettings.setDomainNameLabel(vmShortName);
-    dnsSettings.setFqdn(fqdn);
-    dnsSettings.setReverseFqdn(fqdn);
-    pip.setDnsSettings(dnsSettings);
-
-    // update public IP setting
-    AzureAsyncOperationResponse updateResp =
-      networkResourceProviderClient.getPublicIpAddressesOperations().createOrUpdate(
-        context.getResourceGroupName(), pip.getName(), pip);
-    LOG.debug("Update public DNS resp = {}.", updateResp.getStatus());
-    if (!updateResp.getStatus().equals(OperationStatus.SUCCEEDED)) {
-      throw new UnrecoverableProviderException("Failed to set DNS host name for VM: " +
-        vmName + ".");
-    }
-
-    LOG.debug("Successfully set public DNS of VM to: {}.", fqdn);
   }
 
   /**
@@ -308,10 +242,42 @@ public class AzureComputeProviderHelper {
 
   }
 
-  public PurchasePlan getPurchasePlan(VirtualMachineImage vmImage) {
-    return vmImage.getPurchasePlan();
+  /**
+   * Returns the purchase plan, if it exists, from Azure.
+   *
+   * @param vmImage contains Virtual Machine Image information, built from Azure
+   * @param imageInfo contains the image content, built from images.conf
+   * @return a Plan from Azure, or null if no plan is found
+   */
+  public Plan getPlan(VirtualMachineImage vmImage, AzureVmImageInfo imageInfo) {
+    Plan plan = new Plan();
+
+    // Set the purchase plan if the image has one attached. Certain images do not have a plan
+    PurchasePlan purchasePlan = vmImage.getPurchasePlan();
+    if (purchasePlan != null) {
+      LOG.info("Image {} has a purchase plan attached.", imageInfo);
+      plan.setName(purchasePlan.getName());
+      plan.setProduct(purchasePlan.getProduct());
+      plan.setPromotionCode(null);
+      plan.setPublisher(purchasePlan.getPublisher());
+    } else {
+      LOG.info("Image {} does not have a purchase plan attached.", imageInfo);
+      return null;
+    }
+
+    return plan;
   }
 
+  /**
+   * Queries Azure to get information of a VM image published on Azure Marketplace.
+   *
+   * @param location  Azure region
+   * @param imageInfo image information
+   * @return an Azure image object if the image is successfully located
+   * @throws ServiceException   when Azure backend returns some error
+   * @throws IOException        when there is some network error
+   * @throws URISyntaxException when an invalid URI is given
+   */
   public synchronized VirtualMachineImage getMarketplaceVMImage(String location,
     AzureVmImageInfo imageInfo)
     throws ServiceException, IOException, URISyntaxException {
@@ -336,7 +302,7 @@ public class AzureComputeProviderHelper {
   }
 
   /**
-   * Check if AvailabilitySet is already created. If not create one and set it to context. If so
+   * Checks if AvailabilitySet is already created. If not create one and set it to context. If so
    * use the existing AvailabilitySet and update Resource Context.
    * <p>
    * NOTE: this method is used for testing only. Director Azure Plugin doesn't create AS on user's
@@ -390,33 +356,106 @@ public class AzureComputeProviderHelper {
   }
 
   /**
-   * Create Public IP (if configured) and NIC.
+   * Creates a public IP resource, then assign DNS label, forward and reverse FQDN to the public IP
+   * resource.
+   *
+   * AZURE_SDK This is a re-iteration of NetworkHelper.createPublicIpAddress() in Azure SDK.
+   * The SDK function does not set tags, DNS label, forward and reverse FQDN.
+   *
+   * @param context   Azure ResourceContext
+   * @param dnsLabel  Public DNS label
+   * @return PublicIpAddress object
+   * @throws InterruptedException when polling for Azure backend operation result is interrupted
+   * @throws ExecutionException   when underlying Azure backend call throws an exception
+   * @throws IOException          when there's some IO error
+   * @throws ServiceException     when Azure backend returns some error
+   */
+  private PublicIpAddress createPublicIpAddress(ResourceContext context, String dnsLabel)
+      throws InterruptedException, ExecutionException, IOException, ServiceException {
+    String publicIpName = context.getPublicIpName();
+    PublicIpAddress publicIpParams = new PublicIpAddress(IpAllocationMethod.DYNAMIC,
+        context.getLocation());
+    PublicIpAddressDnsSettings dnsSettings = new PublicIpAddressDnsSettings();
+    dnsSettings.setDomainNameLabel(dnsLabel);
+    publicIpParams.setTags(context.getTags());
+    publicIpParams.setDnsSettings(dnsSettings);
+
+    AzureAsyncOperationResponse resp = networkResourceProviderClient
+        .getPublicIpAddressesOperations()
+        .createOrUpdate(context.getResourceGroupName(), publicIpName, publicIpParams);
+    if (!resp.getStatus().equals(OperationStatus.SUCCEEDED)) {
+      throw new TransientProviderException("Failed to create Public IP " +
+          publicIpParams.getName() + " status code: " + resp.getStatusCode() + ".");
+    }
+
+    PublicIpAddress publicIpCreated = networkResourceProviderClient.getPublicIpAddressesOperations()
+        .get(context.getResourceGroupName(), publicIpName).getPublicIpAddress();
+    context.setPublicIpAddress(publicIpCreated);
+
+    return setReverseFqdnForPublicIp(context);
+  }
+
+  /**
+   * Sets reverse FQDN for a public IP. This function assumes a DNS label is already assigned to the
+   * public IP resource.
    *
    * @param context Azure ResourceContext
+   * @return PublicIpAddress object
+   * @throws InterruptedException when polling for Azure backend operation result is interrupted
+   * @throws ExecutionException   when underlying Azure backend call throws an exception
+   * @throws IOException          when there's some IO error
+   * @throws ServiceException     when Azure backend returns some error
+   */
+  private PublicIpAddress setReverseFqdnForPublicIp(ResourceContext context)
+      throws IOException, ServiceException, InterruptedException, ExecutionException {
+    PublicIpAddress publicIp = context.getPublicIpAddress();
+    if (publicIp == null) {
+      throw new UnrecoverableProviderException("Failed to get public IP config for Public IP "
+          + context.getPublicIpName() + ".");
+    }
+
+    PublicIpAddressDnsSettings dnsSettings = publicIp.getDnsSettings();
+    if (dnsSettings == null) {
+      throw new UnrecoverableProviderException("DNS settings is missing for Public IP " +
+          publicIp.getName() + ".");
+    }
+
+    dnsSettings.setReverseFqdn(dnsSettings.getFqdn());
+    publicIp.setDnsSettings(dnsSettings);
+
+    // update public IP setting
+    AzureAsyncOperationResponse resp = networkResourceProviderClient
+        .getPublicIpAddressesOperations().createOrUpdate(
+            context.getResourceGroupName(), context.getPublicIpName(), publicIp);
+    if (!resp.getStatus().equals(OperationStatus.SUCCEEDED)) {
+      throw new UnrecoverableProviderException("Failed to set reverse FQDN for Public IP "
+          + publicIp.getName() + " status code: " + resp.getStatusCode() + ".");
+    }
+
+    PublicIpAddress publicIpUpdated = networkResourceProviderClient.getPublicIpAddressesOperations()
+        .get(context.getResourceGroupName(), context.getPublicIpName()).getPublicIpAddress();
+    context.setPublicIpAddress(publicIpUpdated);
+
+    LOG.info("Successfully set reverse FQDN to {} for Public IP {}.",
+        publicIpUpdated.getDnsSettings().getReverseFqdn(), context.getPublicIpName());
+
+    return publicIpUpdated;
+  }
+
+  /**
+   * Creates Public IP (if configured) and NIC.
+   *
+   * @param context   Azure ResourceContext
+   * @param snet      Azure Subnet object
+   * @param publicDnsLabel  Public DNS label
    * @return NetworkInterface resource created in Azure
    * @throws Exception Azure SDK API calls throw generic exceptions
    */
   public synchronized NetworkInterface createAndSetNetworkInterface(ResourceContext context,
-                                                                    Subnet snet)
-    throws Exception {
+      Subnet snet, String publicDnsLabel) throws Exception {
     if (context.isCreatePublicIpAddress() && context.getPublicIpAddress() == null) {
-      // AZURE_SDK NetworkHelper.createPublicIpAddress() throw generic Exception.
-      PublicIpAddress pip = NetworkHelper.createPublicIpAddress(
-        networkResourceProviderClient, context);
-
-      // AZURE_SDK NetworkHelper.createPublicIpAddress does not pickup tags from context.
-      if (context.getTags() != null) {
-        pip.setTags(context.getTags());
-        AzureAsyncOperationResponse resp =
-          networkResourceProviderClient.getPublicIpAddressesOperations().createOrUpdate(
-            context.getResourceGroupName(), pip.getName(), pip);
-        if (resp.getStatusCode() != HttpStatus.SC_OK) {
-          throw new TransientProviderException("Failed to add tags to Public IP " + pip.getName() +
-            " status code " + resp.getStatusCode() + ".");
-        }
-        context.setPublicIpAddress(pip);
-        LOG.debug("Successfully updated tags for PublicIP {}.", pip.getName());
-      }
+      PublicIpAddress pip = createPublicIpAddress(context, publicDnsLabel);
+      LOG.info("Successfully created Public IP {}", pip.getName());
     }
 
     LOG.info("Using subnet {} under VNET {}.", snet.getName(),
@@ -438,11 +477,27 @@ public class AzureComputeProviderHelper {
     StorageAccountCreateParameters stoInput = new StorageAccountCreateParameters(storageAccountType,
       context.getLocation());
     // AZURE_SDK StorageHelper.createStorageAccount() throws generic Exception.
-    StorageAccount sa = StorageHelper.createStorageAccount(
-      storageManagementClient, context, stoInput);
+    // Create the storage account
+    StorageHelper.createStorageAccount(storageManagementClient, context, stoInput);
+    // AZURE_SDK: We're doing the extra round trip because createStorageAccount does not set all of
+    // fields we need before returning - this forces a "refresh" and gets all the fields
+    StorageAccount sa = storageManagementClient
+      .getStorageAccountsOperations()
+      .getProperties(context.getResourceGroupName(), context.getStorageAccountName())
+      .getStorageAccount();
+
+    if (sa.getPrimaryEndpoints() != null && sa.getPrimaryEndpoints().getBlob() != null) {
+      LOG.info("StorageAccount: {} has blob URI: {}", sa.getName(),
+        sa.getPrimaryEndpoints().getBlob());
+    } else {
+      LOG.info("StorageAccount: {} has no blob URI.", sa.getName());
+    }
+
+    context.setStorageAccount(sa);
 
     // AZURE_SDK StorageHelper.createStorageAccount() does not pick up tags from context
     if (context.getTags() != null) {
+      LOG.info("Adding tags to StorageAccount: {}", sa.getName());
       sa.setTags(context.getTags());
       StorageAccountUpdateParameters saUpdateParams = new StorageAccountUpdateParameters();
       saUpdateParams.setTags(context.getTags());
@@ -586,7 +641,7 @@ public class AzureComputeProviderHelper {
   }
 
   /**
-   * Get info of all VMs in a resource group.
+   * Gets info of all VMs in a resource group.
    *
    * @param resourceGroup name of resource group
    * @return a list of containing information of all VMs in the resource group

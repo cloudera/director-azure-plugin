@@ -104,6 +104,10 @@ public class TestConfigHelper {
       System.getProperty(
         AzureCredentialsConfiguration.MGMT_URL.unwrap().getConfigKey(),
         AzureCredentialsConfiguration.MGMT_URL.unwrap().getDefaultValue()));
+    providerCfgMap.put(AzureCredentialsConfiguration.ARM_URL.unwrap().getConfigKey(),
+      System.getProperty(
+        AzureCredentialsConfiguration.ARM_URL.unwrap().getConfigKey(),
+        AzureCredentialsConfiguration.ARM_URL.unwrap().getDefaultValue()));
     providerCfgMap.put(AzureCredentialsConfiguration.SUBSCRIPTION_ID.unwrap().getConfigKey(),
       System.getProperty(AzureCredentialsConfiguration.SUBSCRIPTION_ID.unwrap().getConfigKey()));
     providerCfgMap.put(AzureCredentialsConfiguration.AAD_URL.unwrap().getConfigKey(),
@@ -215,6 +219,7 @@ public class TestConfigHelper {
     return new AzureCredentials(
       providerCfgMap.get(AzureCredentialsConfiguration.SUBSCRIPTION_ID.unwrap().getConfigKey()),
       providerCfgMap.get(AzureCredentialsConfiguration.MGMT_URL.unwrap().getConfigKey()),
+      providerCfgMap.get(AzureCredentialsConfiguration.ARM_URL.unwrap().getConfigKey()),
       providerCfgMap.get(AzureCredentialsConfiguration.AAD_URL.unwrap().getConfigKey()),
       providerCfgMap.get(AzureCredentialsConfiguration.TENANT_ID.unwrap().getConfigKey()),
       providerCfgMap.get(AzureCredentialsConfiguration.CLIENT_ID.unwrap().getConfigKey()),

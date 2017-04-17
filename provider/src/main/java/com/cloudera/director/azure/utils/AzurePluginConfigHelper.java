@@ -20,6 +20,7 @@ import com.cloudera.director.azure.AzureLauncher;
 import com.cloudera.director.azure.Configurations;
 import com.microsoft.azure.management.storage.models.AccountType;
 import com.typesafe.config.Config;
+import com.typesafe.config.ConfigException;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigList;
 import com.typesafe.config.ConfigParseOptions;
@@ -43,6 +44,20 @@ public class AzurePluginConfigHelper {
   private static Config azurePluginConfig = null;
   // images.conf
   private static Config configurableImages = null;
+
+  // List of required values from the instance section of the configuration.
+  private static String[] requiredInstanceParams = {
+    Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX,
+    Configurations.AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX,
+    Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE,
+    Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES,
+    Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES
+  };
+
+  // List of required values from the provider section of the configuration.
+  private static String[] requiredProviderParams = {
+    Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS
+  };
 
   /**
    * Sets the static plugin config. The plugin can only be set once, and will remain the same until
@@ -147,41 +162,61 @@ public class AzurePluginConfigHelper {
    * @throws RuntimeException exception is thrown if the parsed config is missing necessary parts
    */
   public static void validatePluginConfig(Config cfg) throws RuntimeException {
+
+    StringBuffer errors = new StringBuffer();
+
     Config providerSection = cfg.getConfig(Configurations.AZURE_CONFIG_PROVIDER);
-    ConfigList supportedRegions = providerSection.getList(
-      Configurations.AZURE_CONFIG_PROVIDER_REGIONS);
-    if (supportedRegions.size() == 0) {
-      throw new RuntimeException(
-        "Supported regions in the the Azure director plugin configuration is empty.");
+    try {
+      ConfigList supportedRegions =
+        providerSection.getList(Configurations.AZURE_CONFIG_PROVIDER_REGIONS);
+      if (supportedRegions.size() == 0) {
+      errors.append("The list of supported regions (" +
+                    Configurations.AZURE_CONFIG_PROVIDER_REGIONS +
+                    ") in the the Azure director plugin configuration is empty.");
+      }
+    } catch (ConfigException e) {
+      errors.append("\n" + e.getMessage());
     }
-    // Ensure provider values are present and non-null at the given path, throws RuntimeException
-    // if the value is not set or null
-    checkConfigSection(providerSection,
-      Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
+
+    // Ensure provider values are present and non-null at the given path.
+    for (String param : requiredProviderParams) {
+      if (!providerSection.hasPath(param)) {
+        errors.append("\nRequired path: " + param + " in the section " + providerSection +
+                      " is missing or empty.");
+      }
+    }
 
     Config instanceSection = cfg.getConfig(Configurations.AZURE_CONFIG_INSTANCE);
-    ConfigList instanceTypes = instanceSection.getList(
-      Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED);
-    if (instanceTypes.size() == 0) {
-      throw new RuntimeException(
-        "Supported instance types in the the Azure director plugin configuration is empty.");
+    try {
+      ConfigList instanceTypes =
+        instanceSection.getList(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED);
+      if (instanceTypes.size() == 0) {
+        errors.append("\nThe list of supported instance types (" +
+                      Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED +
+                      ") in the the Azure director plugin configuration is empty.");
+      }
+    } catch (ConfigException e) {
+      errors.append("\n" + e.getMessage());
     }
 
-    // Ensure instance values are present and non-null at the given path, throws RuntimeException
-    // if the value is not set or null
-    checkConfigSection(instanceSection,
-      Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX);
-    checkConfigSection(instanceSection,
-      Configurations.AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX);
-    checkConfigSection(instanceSection,
-      Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE);
-    checkConfigSection(instanceSection,
-      Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES);
-    checkConfigSection(instanceSection,
-      Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES);
+    // Ensure instance values are present and non-null at the given path.
+    for (String param : requiredInstanceParams) {
+      if (!instanceSection.hasPath(param)) {
+        errors.append("\nRequired path: " + param + " in the section " + instanceSection +
+                      " is missing or empty.");
+      }
+    }
 
-    validateStorageAccountType(instanceSection.getStringList(
-      Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
+    try {
+      validateStorageAccountType(instanceSection.getStringList(
+        Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
+    } catch (IllegalArgumentException e) {
+      errors.append("\n" + e.getMessage());
+    }
+
+    if (errors.length() > 0) {
+      throw new RuntimeException(errors.toString().trim());
+    }
   }
 
   /**
@@ -238,12 +273,5 @@ public class AzurePluginConfigHelper {
     }
 
     return config;
-  }
-
-  private static void checkConfigSection(Config providerSection, String configPath) {
-    if (!providerSection.hasPath(configPath)) {
-      throw new RuntimeException(
-        "Required Section: " + configPath + " is missing or empty.");
-    }
   }
 }

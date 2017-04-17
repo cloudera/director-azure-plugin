@@ -409,7 +409,7 @@ public class AzureComputeProviderHelperLiveTest {
     VmCreationParameters parameters = new VmCreationParameters(vnet, subnet, nsg, as,
       vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
       TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
-      dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
+      dataDiskSizeGiB, cfgHelper.getOfficialRhel67ImageInfo());
     Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
         azureOperationPollingTimeout);
 

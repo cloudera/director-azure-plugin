@@ -31,7 +31,6 @@ import com.microsoft.azure.management.compute.models.NetworkProfile;
 import com.microsoft.azure.management.compute.models.OSDisk;
 import com.microsoft.azure.management.compute.models.OSProfile;
 import com.microsoft.azure.management.compute.models.Plan;
-import com.microsoft.azure.management.compute.models.PurchasePlan;
 import com.microsoft.azure.management.compute.models.StorageProfile;
 import com.microsoft.azure.management.compute.models.VirtualHardDisk;
 import com.microsoft.azure.management.compute.models.VirtualMachine;
@@ -40,7 +39,6 @@ import com.microsoft.azure.management.network.models.NetworkSecurityGroup;
 import com.microsoft.azure.management.network.models.Subnet;
 import com.microsoft.azure.management.network.models.VirtualNetwork;
 import com.microsoft.azure.management.storage.models.AccountType;
-import com.microsoft.azure.utility.ComputeHelper;
 import com.microsoft.azure.utility.ResourceContext;
 
 import java.util.ArrayList;
@@ -114,6 +112,8 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
    * @throws Exception several Azure SDK API calls throws generic exceptions
    */
   private void requestResources() throws Exception {
+    String vmShortName = AzureComputeProviderHelper.getShortVMName(vmNamePrefix, instanceId);
+
     // AZURE_SDK Azure SDK API StorageHelper#createStorageAccount throws generic Exception
     computeProviderHelper.createAndSetStorageAccount(storageAccountType, context);
     LOG.info("Created StorageAccount: {}, type {}, for VM {}.", context.getStorageAccountName(),
@@ -121,7 +121,7 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
 
     // AZURE_SDK Azure SDK API NetworkHelper throws generic Exception
     context.setVirtualNetwork(vnet);
-    computeProviderHelper.createAndSetNetworkInterface(context, subnet);
+    computeProviderHelper.createAndSetNetworkInterface(context, subnet, vmShortName);
     LOG.info("Created NetworkInterface: {}, for VM {}.", context.getNetworkInterfaceName(), vmName);
 
     // AZURE_SDK Currently Create NSG will fail due to bug in Azure SDK.
@@ -129,7 +129,9 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
     computeProviderHelper.setNetworkSecurityGroup(nsg, context);
     LOG.info("Use existing NetworkSecurityGroup: {}, for VM {}.", nsg.getName(), vmName);
 
-    String vhdContainer = ComputeHelper.getVhdContainerUrl(context);
+    // AZURE_SDK: ComputeHelper.getVhdContainerUrl() returns hard coded Azure public endpoint URL
+    // so we build it ourself
+    String vhdContainer = getVhdContainerUrl(context);
     String osVhduri = vhdContainer + String.format("/os%s.vhd", "osvhd");
 
     VirtualMachine vm = new VirtualMachine(context.getLocation());
@@ -169,20 +171,8 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
     ir.setVersion(version);
     sto.setImageReference(ir);
     // This is a thread safe call as inputs are all local to this task
-    PurchasePlan purchasePlan = computeProviderHelper.getPurchasePlan(vmimage);
-
-    // Set purchase plan if the image has one attached. Certain images does not have purchase plan
-    // attached.
-    if (purchasePlan != null) {
-      Plan plan = new Plan();
-      plan.setName(purchasePlan.getName());
-      plan.setProduct(purchasePlan.getProduct());
-      plan.setPromotionCode(null);
-      plan.setPublisher(purchasePlan.getPublisher());
-      vm.setPlan(plan);
-    } else {
-      LOG.info("Image {} does not have purchase plan attached.", imageInfo);
-    }
+    Plan plan = computeProviderHelper.getPlan(vmimage, imageInfo);
+    vm.setPlan(plan);
 
     // Setup storage, osdisk + datadisk
     VirtualHardDisk vhardDisk = new VirtualHardDisk();
@@ -205,8 +195,6 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
     networkProfile.setNetworkInterfaces(nirs);
     vm.setNetworkProfile(networkProfile);
 
-    String vmShortName = AzureComputeProviderHelper.getShortVMName(vmNamePrefix, instanceId);
-
     // Set os profile
     OSProfile osProfile = new OSProfile();
     osProfile.setAdminUsername(adminName);
@@ -217,11 +205,6 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
     vm.setOSProfile(osProfile);
     vm.setTags(context.getTags());
     context.setVMInput(vm);
-
-    // set DNS label, forward & backward FQDN
-    if (context.isCreatePublicIpAddress()) {
-      computeProviderHelper.setPublicDNSInfo(context, vmShortName);
-    }
 
     LOG.info("Successfully requested resources for VM {}.", vmName);
   }
@@ -268,5 +251,24 @@ public class CreateVMTask extends AbstractAzureComputeProviderTask implements Ca
     }
 
     return new TaskResult(success, this.context);
+  }
+
+  /**
+   * AZURE_SDK: this is a replacement method for ComputeHelper.getVhdContainerUrl(ResourceContext)
+   * as the Azure method does not support Azure Gov or sovereign clouds.
+   *
+   * @param context Azure resource context. Stores detailed info of VM supporting resources when
+   * the function returns
+   * @return a manually built VHD Container URL compatible with all Azure clouds
+   */
+  public static String getVhdContainerUrl(ResourceContext context) {
+    String vhdContainerUrl = String.format(
+      "%s%s",
+      context.getStorageAccount().getPrimaryEndpoints().getBlob(),
+      context.getContainerName());
+
+    LOG.info("vhdContainerUrl: {}", vhdContainerUrl);
+
+    return vhdContainerUrl;
   }
 }

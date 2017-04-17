@@ -96,8 +96,8 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     "Network Security Group '%s' does not exist within the Resource Group '%s'. Please create " +
       "the Network Security Group or use an existing one.";
   static final String AVAILABILITY_SET_MSG =
-    "Availability Set '%s' does not exist. Please create the Availability Set or use an " +
-      "existing one.";
+    "Availability Set '%s' does not exist in Resource Group '%s'. Please create the Availability " +
+      "Set or use an existing one.";
   static final String AVAILABILITY_SET_MISMATCH_MSG =
     "Virtual Machine size '%s' is not allowed in Availability Set '%s'. Different versions of " +
       "the same VM size (e.g. v2 vs. non-v2) cannot coexist in the same Availability Set. Use a " +
@@ -530,10 +530,10 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       } else {
         message = AVAILABILITY_SET_MSG;
       }
-      LOG.error(String.format(message, asName));
+      LOG.error(String.format(message, asName, computeRgName));
       addError(accumulator,
         AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
-        localizationContext, null, message, asName);
+        localizationContext, null, message, asName, computeRgName);
     }
   }
 

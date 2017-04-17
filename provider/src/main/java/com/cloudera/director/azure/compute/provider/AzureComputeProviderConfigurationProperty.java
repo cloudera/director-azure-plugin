@@ -61,7 +61,15 @@ public enum AzureComputeProviderConfigurationProperty implements ConfigurationPr
         "centralindia",
         "southindia",
         "japaneast",
-        "japanwest")
+        "japanwest",
+        // US Gov
+        "usgovvirginia",
+        //"usgoviowa", // this region does not support premium storage yet
+        "usdodeast",
+        "usdodcentral",
+        // Germany
+        "germanycentral",
+        "germanynortheast")
     .build());
 
   /**

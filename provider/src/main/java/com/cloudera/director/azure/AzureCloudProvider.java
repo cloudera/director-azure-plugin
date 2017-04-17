@@ -68,7 +68,23 @@ public class AzureCloudProvider extends AbstractCloudProvider {
     this.credentials = creds;
   }
 
+  /**
+   * Creates an AzureComputeProvider object. Also verifies the credentials provider in config.
+   *
+   * @param resourceProviderId  resource provider ID
+   * @param configuration       resource provider configuration
+   * @return an AzureComputeProvider object
+   * @throws AuthenticationException if the credentials are invalid
+   */
   public ResourceProvider createResourceProvider(String resourceProviderId, Configured configuration) {
+    // validate credentials
+    if (!AzurePluginConfigHelper.getValidateCredentialsFlag()) {
+      LOG.info("Skipping Azure credential validation with Azure backend.");
+    } else {
+      // Verify the credentials by trying to get an Azure config.
+      credentials.createConfiguration();
+    }
+
     if (AzureComputeProvider.METADATA.getId().equals(resourceProviderId)) {
       // AZURE_SDK Azure SDK requires the following calls to correctly create clients.
       ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();

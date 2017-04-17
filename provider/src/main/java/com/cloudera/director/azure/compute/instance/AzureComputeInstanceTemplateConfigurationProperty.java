@@ -38,6 +38,7 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
       "cloudera-centos-68-latest",
       "cloudera-centos-72-latest",
       "redhat-rhel-67-latest",
+      "redhat-rhel-68-latest",
       "redhat-rhel-72-latest")
     .defaultDescription("The image alias from plugin configuration.")
     .defaultErrorMessage("Image alias is mandatory")
@@ -115,7 +116,6 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements Configu
   HOST_FQDN_SUFFIX(new SimpleConfigurationPropertyBuilder()
     .configKey("hostFqdnSuffix")
     .name("Host FQDN suffix")
-    .defaultValue("cdh-cluster.internal")
     .defaultDescription(
       "The private domain name used to create a FQDN for each host. </ br>" +
         "Note: Azure provided DNS service does not support reverse DNS lookup for private IP " +

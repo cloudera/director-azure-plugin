@@ -17,6 +17,7 @@
 package com.cloudera.director.azure.compute.credentials;
 
 import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.AAD_URL;
+import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.ARM_URL;
 import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.CLIENT_ID;
 import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.CLIENT_SECRET;
 import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.MGMT_URL;
@@ -59,9 +60,9 @@ import org.slf4j.LoggerFactory;
 public class AzureCredentials {
   private static final Logger LOG = LoggerFactory.getLogger(AzureCredentials.class);
 
-  private static final String DEFAULT_BASE_URI = "https://management.azure.com/";
   private final String subId;
   private final String mgmtUrl;
+  private final String armUrl;
   private final String aadUrl;
   private final String tenant;
   private final String clientId;
@@ -70,16 +71,18 @@ public class AzureCredentials {
   public AzureCredentials(Configured config, LocalizationContext local) {
     this.subId = config.getConfigurationValue(SUBSCRIPTION_ID, local);
     this.mgmtUrl = config.getConfigurationValue(MGMT_URL, local);
+    this.armUrl = config.getConfigurationValue(ARM_URL, local);
     this.aadUrl = config.getConfigurationValue(AAD_URL, local);
     this.tenant = config.getConfigurationValue(TENANT_ID, local);
     this.clientId = config.getConfigurationValue(CLIENT_ID, local);
     this.clientKey = config.getConfigurationValue(CLIENT_SECRET, local);
   }
 
-  public AzureCredentials(String subId, String mgmtUrl,
-    String aadUrl, String tenant, String clientId, String clientKey) {
+  public AzureCredentials(String subId, String mgmtUrl, String armUrl, String aadUrl,
+    String tenant, String clientId, String clientKey) {
     this.subId = subId;
     this.mgmtUrl = mgmtUrl;
+    this.armUrl = armUrl;
     this.aadUrl = aadUrl;
     this.tenant = tenant;
     this.clientId = clientId;
@@ -109,6 +112,15 @@ public class AzureCredentials {
   /**
    * Creates configuration builds the management configuration needed for creating the clients.
    * <p/>
+   * There's some trickiness around URIs (see code for more details):
+   *   - under the hood the SDK uses the management URI correctly only for getting an access token
+   *     (see getAccessTokenFromServicePrincipalCredentials())
+   *   - even though it's passed in when we create the Configuration object, the URI is not being
+   *     used to set the "management.uri" field
+   *   - within the Configuration and underlying Client SDK classes "management.uri" is used where
+   *     the Azure Resource Manager (ARM) URI should be; to fix this, we explicitly set
+   *     "management.uri" to ARM URL so that references of "management.uri" get the correct URL
+   * <p/>
    * The config contains the baseURI which is the base of the ARM REST service,
    * the subscription id as the context for the ResourceManagementService and
    * the AAD token required for the HTTP Authorization header.
@@ -121,14 +133,22 @@ public class AzureCredentials {
    */
   public Configuration createConfiguration() throws UnrecoverableProviderException,
     TransientProviderException {
+    LOG.info("Initializing Configuration with \"management.uri\" as " + armUrl);
+
     try {
-      return ManagementConfiguration.configure(
+      Configuration configuration = ManagementConfiguration.configure(
         null, // AZURE_SDK: This is always set to null in all the examples in Azure SDK
-        new URI(DEFAULT_BASE_URI),
+        // AZURE_SDK: this does not set the "management.uri" field, it sets a field that is never
+        // referenced - essentially this can be anything
+        new URI(armUrl),
         subId,
         createCredentials().getToken());
+      // AZURE_SDK: The "management.uri" field is used as if it was actually ARM URI
+      configuration.setProperty("management.uri", new URI(armUrl));
+      return configuration;
     } catch (URISyntaxException | MalformedURLException e) {
-      LOG.error("Malformed Azure Management URI {}.", DEFAULT_BASE_URI, e);
+      LOG.error("Malformed Azure Resource Manager URL (stored in \"management.uri\"): {}.",
+        armUrl, e);
       throw new InvalidCredentialsException(e);
     } catch (ServiceUnavailableException | IOException e) {
       LOG.error("Encountered error contacting Azure Active Directory service.", e);

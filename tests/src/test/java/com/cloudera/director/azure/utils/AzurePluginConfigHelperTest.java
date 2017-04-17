@@ -278,6 +278,99 @@ public class AzurePluginConfigHelperTest {
       AzurePluginConfigHelper.validatePluginConfig(providerSectionWithoutPolling);
       fail("Did not throw expected exception due to missing config value");
     } catch(RuntimeException e) {
+      assertTrue(e.getMessage()
+        .contains(Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS));
+    }
+  }
+
+  @Test
+  public void testMissingRegions() throws Exception {
+    Config cfg =
+      AzurePluginConfigHelper.parseConfigFromClasspath(Configurations
+                                                       .AZURE_CONFIG_FILENAME);
+    Config newConfig =
+      cfg.withoutPath(Configurations.AZURE_CONFIG_PROVIDER + "." +
+                      Configurations.AZURE_CONFIG_PROVIDER_REGIONS);
+
+    try {
+      AzurePluginConfigHelper.validatePluginConfig(newConfig);
+      fail("Did not throw expected exception due to missing config value");
+    } catch(RuntimeException e) {
+      assertTrue(e.getMessage()
+        .contains(Configurations.AZURE_CONFIG_PROVIDER_REGIONS));
+    }
+  }
+
+  @Test
+  public void testMissingSupportedInstances() throws Exception {
+    Config cfg =
+      AzurePluginConfigHelper.parseConfigFromClasspath(Configurations
+                                                       .AZURE_CONFIG_FILENAME);
+    Config newConfig =
+      cfg.withoutPath(Configurations.AZURE_CONFIG_INSTANCE + "." +
+                      Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED);
+
+    try {
+      AzurePluginConfigHelper.validatePluginConfig(newConfig);
+      fail("Did not throw expected exception due to missing config value");
+    } catch(RuntimeException e) {
+      assertTrue(e.getMessage()
+        .contains(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED));
+    }
+  }
+
+  @Test
+  public void testTwoMissingParams() throws Exception {
+    Config cfg = AzurePluginConfigHelper.parseConfigFromClasspath(
+      Configurations.AZURE_CONFIG_FILENAME);
+
+    Config newConfig =
+      cfg.withoutPath(Configurations.AZURE_CONFIG_PROVIDER + "." +
+                      Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
+    newConfig =
+      newConfig.withoutPath(Configurations.AZURE_CONFIG_INSTANCE + "." +
+                            Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX);
+     try {
+      AzurePluginConfigHelper.validatePluginConfig(newConfig);
+      fail("Did not throw expected exception due to missing config value");
+     } catch(RuntimeException e) {
+       assertTrue(e.getMessage()
+         .contains(Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX));
+       assertTrue(e.getMessage()
+         .contains(Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS));
+    }
+  }
+
+  @Test
+  public void testMultipleMissingParams() throws Exception {
+    Config cfg = AzurePluginConfigHelper.parseConfigFromClasspath(
+      Configurations.AZURE_CONFIG_FILENAME);
+
+    Config newConfig =
+      cfg.withoutPath(Configurations.AZURE_CONFIG_PROVIDER + "." +
+                      Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS);
+    newConfig =
+      newConfig.withoutPath(Configurations.AZURE_CONFIG_INSTANCE + "." +
+                            Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX);
+    newConfig =
+      newConfig.withoutPath(Configurations.AZURE_CONFIG_INSTANCE + "." +
+                            Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED);
+    newConfig =
+      newConfig.withoutPath(Configurations.AZURE_CONFIG_INSTANCE + "." +
+                            Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE);
+
+    try {
+      AzurePluginConfigHelper.validatePluginConfig(newConfig);
+      fail("Did not throw expected exception due to missing config value");
+     } catch(RuntimeException e) {
+       assertTrue(e.getMessage()
+         .contains(Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX));
+       assertTrue(e.getMessage()
+         .contains(Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS));
+       assertTrue(e.getMessage()
+         .contains(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED));
+       assertTrue(e.getMessage()
+         .contains(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE));
       assertTrue(
         e.getMessage()
           .contains(

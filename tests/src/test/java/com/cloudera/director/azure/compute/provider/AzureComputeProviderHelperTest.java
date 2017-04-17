@@ -181,28 +181,6 @@ public class AzureComputeProviderHelperTest {
 
 
   //
-  // getPublicFqdn() Tests
-  //
-
-  @Test
-  public void getPublicFqdn_anyInput_returnsConcatenation() throws Exception {
-    String vmShortName = "default";
-    String regionName = "uswest";
-
-    Class clazz = AzureComputeProviderHelper.class;
-    Method method = clazz.getDeclaredMethod("getPublicFqdn", String.class, String.class);
-    method.setAccessible(true);
-    Field field = clazz.getDeclaredField("PUBLIC_URL_POSTFIX");
-    field.setAccessible(true);
-
-    String publicFqdn = (String) method.invoke(helper, vmShortName, regionName);
-    String urlPostfix = (String) field.get(helper);
-
-    assertEquals(vmShortName + "." + regionName + urlPostfix, publicFqdn);
-  }
-
-
-  //
   // getSshPath() Tests
   //
 

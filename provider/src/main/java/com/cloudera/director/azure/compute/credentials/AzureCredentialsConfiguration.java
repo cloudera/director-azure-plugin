@@ -25,14 +25,25 @@ import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilde
  */
 public enum AzureCredentialsConfiguration implements ConfigurationPropertyToken {
 
-  // Mgmt URL should be fixed unless MSFT changes it
+  // managementEndpointUrl
   MGMT_URL(new SimpleConfigurationPropertyBuilder()
     .configKey("mgmtUrl")
     .name("Management URL")
-    .defaultDescription("Azure Resource Management URL.<br />")
+    .defaultDescription("Management URL.<br />")
     .defaultErrorMessage("Management URL is mandatory")
     .defaultValue("https://management.core.windows.net/")
     .required(true)
+    .widget(ConfigurationProperty.Widget.TEXT)
+    .build()),
+
+  // resourceManagerEndpointUrl
+  ARM_URL(new SimpleConfigurationPropertyBuilder()
+    .configKey("armUrl")
+    .name("Resource Manager URL")
+    .defaultDescription("Azure Resource Management URL.<br />")
+    .defaultErrorMessage("Azure Resource Management URL is mandatory")
+    .defaultValue("https://management.azure.com/")
+    .required(false)
     .widget(ConfigurationProperty.Widget.TEXT)
     .build()),
 

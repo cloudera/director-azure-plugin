@@ -80,6 +80,7 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineOperations;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.AvailabilitySet;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.InstanceViewStatus;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.Plan;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.PurchasePlan;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.VirtualMachine;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.VirtualMachineGetResponse;
@@ -151,6 +152,7 @@ public class AzureComputeProviderTest {
   private VirtualMachineInstanceView iv = mock(VirtualMachineInstanceView.class);
   private VirtualMachineImage vmimage = mock(VirtualMachineImage.class);
   private PurchasePlan purchasePlan = mock(PurchasePlan.class);
+  private Plan plan = mock(Plan.class);
   private AzureVmImageInfo imageInfo =
     new AzureVmImageInfo("cloudera", "CLOUDERA-CENTOS-6", "cloudera-centos-6", "latest");
   private static final DefaultLocalizationContext DEFAULT_LOCALIZATION_CONTEXT =
@@ -191,7 +193,7 @@ public class AzureComputeProviderTest {
 
 
     when(computeProviderHelper.getMarketplaceVMImage(anyString(), any(AzureVmImageInfo.class))).thenReturn(vmimage);
-    when(computeProviderHelper.getPurchasePlan(vmimage)).thenReturn(purchasePlan);
+    when(computeProviderHelper.getPlan(vmimage, imageInfo)).thenReturn(plan);
     when(computeProviderHelper.getVirtualNetworkByName(anyString(), anyString())).thenReturn(vnet);
     when(computeProviderHelper.getSubnetByName(anyString(), anyString(), anyString())).thenReturn(subnet);
     when(computeProviderHelper.getNetworkSecurityGroupByName(anyString(), anyString())).thenReturn(nsg);
