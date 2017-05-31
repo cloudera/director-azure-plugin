@@ -63,6 +63,8 @@ public final class Configurations {
   public static final String AZURE_VALIDATE_RESOURCES = "azure-validate-resources";
   public static final String AZURE_VALIDATE_CREDENTIALS = "azure-validate-credentials";
 
+  public static final String AZURE_USE_STATIC_PRIVATE_IP = "use-static-private-ip";
+
   /**
    * File containing list of configurable images.
    */

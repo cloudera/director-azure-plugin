@@ -133,8 +133,6 @@ public class AzureCredentials {
    */
   public Configuration createConfiguration() throws UnrecoverableProviderException,
     TransientProviderException {
-    LOG.info("Initializing Configuration with \"management.uri\" as " + armUrl);
-
     try {
       Configuration configuration = ManagementConfiguration.configure(
         null, // AZURE_SDK: This is always set to null in all the examples in Azure SDK

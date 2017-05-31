@@ -112,6 +112,15 @@ public class AzurePluginConfigHelper {
   }
 
   /**
+   * Get the config value for whether to use static private IP address
+   *
+   * @return True (default) if all VMs should use statically assigned private IP addresses
+   */
+  public synchronized static boolean getUseStaticPrivateIp() {
+    return azurePluginConfig.getBoolean(Configurations.AZURE_USE_STATIC_PRIVATE_IP);
+  }
+
+  /**
    * Sets the images config. The images can only be set once, and will remain the same until
    * Director is restarted.
    */

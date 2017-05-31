@@ -18,6 +18,7 @@ package com.cloudera.director.azure.compute.provider;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
@@ -35,6 +36,7 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.ComputeManagementService;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.AvailabilitySet;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.models.VirtualMachine;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.IpAllocationMethod;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.NetworkSecurityGroup;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.Subnet;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.models.VirtualNetwork;
@@ -454,6 +456,7 @@ public class AzureComputeProviderHelperLiveTest {
    *   - getPrivateFqdn()
    *   - getPublicIpAddress()
    *   - getPublicFqdn()
+   *   - getPrivateIpAllocationMethod()
    *
    * @throws Exception
    */
@@ -510,13 +513,92 @@ public class AzureComputeProviderHelperLiveTest {
         TestConfigHelper.DEFAULT_TEST_PUBLIC_URL_POSTFIX,
       azureComputeInstanceHelper.getPublicFqdn());
 
+    // getPrivateIpAllocationMethod()
+    // Verifies the default private IP allocation method is Static
+    assertEquals(IpAllocationMethod.STATIC,
+        azureComputeInstanceHelper.getPrivateIpAllocationMethod());
+
     // wait a little before deleting the VM and its supporting resources.
     Thread.sleep(10 * 1000);
 
     LOG.info("Start delete VM {}.", vmName);
 
     Future<TaskResult> deleteTask = taskRunner.submitDeleteVmTask(helper,
-        context.getResourceGroupName(), vm,true, azureOperationPollingTimeout);
+        context.getResourceGroupName(), vm, true, azureOperationPollingTimeout);
+
+    taskRunner.pollPendingTask(deleteTask, 1800, 10);
+  }
+
+  /**
+   * Tests AzureComputeInstanceHelper can handle cases where OS profile for some VM can be null.
+   *
+   * @throws Exception
+   */
+  @Test
+  public void AzureComputeInstanceDisplayPropertyToken_standardSetup_nullOsProfile()
+      throws Exception {
+    LOG.info("Start create vm " + vmName);
+    VmCreationParameters parameters = new VmCreationParameters(vnet, subnet, nsg, as,
+        vmSize, vmNamePrefix, instanceId, fqdnSuffix, TestConfigHelper.DEFAULT_TEST_SSH_USERNAME,
+        TestConfigHelper.DEFAULT_TEST_SSH_PUBLIC_KEY, storageAccountType, dataDiskCount,
+        dataDiskSizeGiB, cfgHelper.getDefaultImageInfo());
+    Future<TaskResult> vmr = taskRunner.submitVmCreationTask(helper, context, parameters,
+        azureOperationPollingTimeout);
+
+    taskRunner.pollPendingTask(vmr, 1800, 10);
+    LOG.info("VM {} is created.", vmName);
+
+    VirtualMachine vm = computeManagementClient.getVirtualMachinesOperations()
+        .getWithInstanceView(cfgHelper.getTestResourceGroup(), vmName)
+        .getVirtualMachine();
+
+    // set OS profile to null to simulate the rare case OS profile might be null
+    vm.setOSProfile(null);
+
+    // VM is up, test the AzureComputeInstanceHelper get methods
+    AzureComputeInstanceHelper azureComputeInstanceHelper =
+        helper.createAzureComputeInstanceHelper(vm, cred, context.getResourceGroupName());
+
+    // getImageReference()
+    assertNotNull(azureComputeInstanceHelper.getImageReference());
+    assertEquals("CLOUDERA-CENTOS-6", azureComputeInstanceHelper.getImageReference());
+
+    // getInstanceID()
+    assertNotNull(azureComputeInstanceHelper.getInstanceID());
+
+    // getInstanceType()
+    assertNotNull(azureComputeInstanceHelper.getInstanceType());
+    assertEquals("Standard_DS2", azureComputeInstanceHelper.getInstanceType());
+
+    // getPrivateIpAddress()
+    assertNotNull(azureComputeInstanceHelper.getPrivateIpAddress());
+
+    // getPrivateFqdn()
+    assertNull(azureComputeInstanceHelper.getPrivateFqdn());
+
+    // getPublicIpAddress()
+    assertNotNull(azureComputeInstanceHelper.getPublicIpAddress());
+
+    // getPublicFqdn()
+    assertNotNull(azureComputeInstanceHelper.getPublicFqdn());
+    assertEquals(
+        AzureComputeProviderHelper.getShortVMName(vmNamePrefix, instanceId) + "." +
+            TestConfigHelper.DEFAULT_TEST_REGION + "." +
+            TestConfigHelper.DEFAULT_TEST_PUBLIC_URL_POSTFIX,
+        azureComputeInstanceHelper.getPublicFqdn());
+
+    // getPrivateIpAllocationMethod()
+    // Verifies the default private IP allocation method is Static
+    assertEquals(IpAllocationMethod.STATIC,
+        azureComputeInstanceHelper.getPrivateIpAllocationMethod());
+
+    // wait a little before deleting the VM and its supporting resources.
+    Thread.sleep(10 * 1000);
+
+    LOG.info("Start delete VM {}.", vmName);
+
+    Future<TaskResult> deleteTask = taskRunner.submitDeleteVmTask(helper,
+        context.getResourceGroupName(), vm, true, azureOperationPollingTimeout);
 
     taskRunner.pollPendingTask(deleteTask, 1800, 10);
   }

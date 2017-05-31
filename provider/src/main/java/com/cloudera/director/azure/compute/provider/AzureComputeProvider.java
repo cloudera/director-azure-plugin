@@ -466,6 +466,7 @@ public class AzureComputeProvider
 
     PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
     List<AzureComputeInstance> result = new ArrayList<AzureComputeInstance>();
+    List<String> vmNames = new ArrayList<>();
     Map<String, VirtualMachine> prefixedNameToVmMapping = listVmsInResourceGroup(rgName,
         accumulator);
     for (String currentId : instanceIds) {
@@ -476,14 +477,15 @@ public class AzureComputeProvider
           result.add(new AzureComputeInstance(
             template, currentId, computeProviderHelper.createAzureComputeInstanceHelper(vm,
             credentials, rgName)));
+          vmNames.add(currentId);
         }
       } catch (IOException | ServiceException e) {
-        LOG.info("Instance '{}' not found due to error.", currentId, e);
+        LOG.info("Instance '{}' not found due to error: ", currentId, e);
         accumulator.addError(null, e.getMessage());
       }
     }
 
-    LOG.info("Found the following VMs: {}.", result);
+    LOG.info("Found the following VMs: {}.", vmNames);
 
     if (accumulator.hasError()) {
       logErrorMessage(accumulator);

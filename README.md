@@ -155,6 +155,10 @@ The `azure-plugin.conf` file defines settings that Cloudera Director uses to val
         "STANDARD_DS12_V2",
         "STANDARD_GS5",
         "STANDARD_GS4",
+        "STANDARD_D15_V2",
+        "STANDARD_D14_V2"
+        "STANDARD_D13_V2",
+        "STANDARD_D12_V2",
         "YOUR_NEW_INSTANCE"
     ]
     ```

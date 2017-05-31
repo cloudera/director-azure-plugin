@@ -77,7 +77,10 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
   private String location;
 
   static final String VIRTUAL_MACHINE_MSG =
-    "Virtual Machine '%s' is not supported.";
+    "Virtual machine '%s' is not supported. Consult the Cloudera Director " +
+    "documentation or Cloudera support for details on updating the " +
+    "Cloudera Director Azure plugin configuration, or to upgrade to the " +
+    "latest version of Cloudera Director.";
   static final String INSTANCE_NAME_PREFIX_MSG =
     "Instance name prefix '%s' does not satisfy Azure DNS label requirement: %s.";
   static final String FQDN_SUFFIX_MSG =

@@ -60,7 +60,8 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
     },
 
     /**
-     * The ID of the instance.
+     * The ID of the instance. For display purposes we return VM name instead
+     * of the return from getInstanceID.
      */
     INSTANCE_ID(new SimpleDisplayPropertyBuilder()
       .displayKey("instanceId")
@@ -69,7 +70,7 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
       .build()) {
       @Override
       protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
-        return instanceHelper.getInstanceID();
+        return instanceHelper.getVMName();
       }
     },
 

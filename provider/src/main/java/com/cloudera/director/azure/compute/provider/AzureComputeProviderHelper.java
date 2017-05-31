@@ -461,7 +461,16 @@ public class AzureComputeProviderHelper {
     LOG.info("Using subnet {} under VNET {}.", snet.getName(),
       context.getVirtualNetwork().getName());
 
-    return NetworkHelper.createNIC(networkResourceProviderClient, context, snet);
+    // AZURE_SDK NetworkHelper.createNIC throws generic Exception.
+    NetworkInterface nic = NetworkHelper.createNIC(networkResourceProviderClient, context, snet);
+
+    // NetworkHelper.createNIC() is hard coded to use dynamically assigned private IP address.
+    // Override the config to use statically assigned private IP to safely support stop/start.
+    if (AzurePluginConfigHelper.getUseStaticPrivateIp()) {
+      nic.getIpConfigurations().get(0).setPrivateIpAllocationMethod(IpAllocationMethod.STATIC);
+    }
+
+    return nic;
   }
 
   /**

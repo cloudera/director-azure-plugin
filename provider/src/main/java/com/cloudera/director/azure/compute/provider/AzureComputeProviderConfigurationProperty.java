@@ -65,8 +65,6 @@ public enum AzureComputeProviderConfigurationProperty implements ConfigurationPr
         // US Gov
         "usgovvirginia",
         //"usgoviowa", // this region does not support premium storage yet
-        "usdodeast",
-        "usdodcentral",
         // Germany
         "germanycentral",
         "germanynortheast")

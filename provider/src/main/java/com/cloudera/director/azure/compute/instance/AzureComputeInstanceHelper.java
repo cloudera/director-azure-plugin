@@ -63,6 +63,11 @@ public class AzureComputeInstanceHelper {
     this.publicFqdn = getFqdn(PUBLIC);
   }
 
+  public String getVMName() {
+    LOG.debug("Get VM name for VM {}.", vm.getName());
+    return vm.getName();
+  }
+
   public String getImageReference() {
     LOG.debug("Get image reference for VM {}.", vm.getName());
     return vm.getStorageProfile().getImageReference().getOffer();
@@ -90,7 +95,6 @@ public class AzureComputeInstanceHelper {
   public String getPrivateFqdn() {
     if (privateFqdn == null) {
       LOG.error("Private FQDN for VM {} is null.", vm.getName());
-      throw new IllegalArgumentException("Private FQDN for VM " + vm.getName() + " is null.");
     }
     LOG.debug("Get private FQDN {} for VM {}.", privateFqdn, vm.getName());
     return privateFqdn;
@@ -146,14 +150,21 @@ public class AzureComputeInstanceHelper {
     if (isPublic) {
       NetworkInterfaceIpConfiguration ipConfig = getIpConfig(networkResourceProviderClient);
       if (ipConfig.getPublicIpAddress() != null) {
-        return getPublicIP(ipConfig, networkResourceProviderClient).getDnsSettings().getFqdn();
+        try {
+          return getPublicIP(ipConfig, networkResourceProviderClient).getDnsSettings().getFqdn();
+        } catch (ServiceException e) {
+          LOG.error("Public IP for instance {} not found due to error: {}", getInstanceID(),
+              e.getMessage());
+          return null;
+        }
       } else {
         LOG.info("Public IP is not configured for VM {}.", vm.getName());
         return null;
       }
     } else {
       // AZURE_SDK `nic.getDnsSettings().getInternalFqdn()` returns null
-      return vm.getOSProfile().getComputerName();
+      // OSProfile can be null in certain rare cases
+      return (vm.getOSProfile() == null) ? null : vm.getOSProfile().getComputerName();
     }
   }
 
@@ -166,10 +177,16 @@ public class AzureComputeInstanceHelper {
 
     if (isPublic) {
       if (ipConfig.getPublicIpAddress() != null) {
-        String ipAddress = getPublicIP(ipConfig, networkResourceProviderClient).getIpAddress();
-        // When VM is de-allocated, public IP Address resource will be present but the IP address
-        // be null. InetAddress.getByName() will interpret null address to loopback (127.0.0.1).
-        return (ipAddress == null) ? null : InetAddress.getByName(ipAddress);
+        try {
+          String ipAddress = getPublicIP(ipConfig, networkResourceProviderClient).getIpAddress();
+          // When VM is de-allocated, public IP Address resource will be present but the IP address
+          // be null. InetAddress.getByName() will interpret null address to loopback (127.0.0.1).
+          return (ipAddress == null) ? null : InetAddress.getByName(ipAddress);
+        } catch (ServiceException e) {
+          LOG.error("Public IP for instance {} not found due to error: {}", getInstanceID(),
+              e.getMessage());
+          return null;
+        }
       } else {
         LOG.info("Public IP is not configured for VM {}.", vm.getName());
         return null;
@@ -177,5 +194,22 @@ public class AzureComputeInstanceHelper {
     } else {
       return InetAddress.getByName(ipConfig.getPrivateIpAddress());
     }
+  }
+
+  /**
+   * Test only: Gets the private IP allocation method string
+   *
+   * @return the private IP allocation method (static or dynamic)
+   * @throws IOException      when there's an IO (networking) error
+   * @throws ServiceException when Azure backend returns an error
+   */
+  public String getPrivateIpAllocationMethod() throws IOException, ServiceException {
+    LOG.debug("Get private IP allocation method for VM {}.", vm.getName());
+    Configuration config = cred.createConfiguration();
+    NetworkResourceProviderClient networkResourceProviderClient = NetworkResourceProviderService
+        .create(config);
+    NetworkInterfaceIpConfiguration ipConfig = getIpConfig(networkResourceProviderClient);
+    LOG.debug("Private IP allocation method is: {}.", ipConfig.getPrivateIpAllocationMethod());
+    return ipConfig.getPrivateIpAllocationMethod();
   }
 }
