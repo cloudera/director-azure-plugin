@@ -21,8 +21,12 @@ import com.cloudera.director.spi.v1.model.DisplayProperty;
 import com.cloudera.director.spi.v1.model.DisplayPropertyToken;
 import com.cloudera.director.spi.v1.model.util.SimpleDisplayPropertyBuilder;
 import com.cloudera.director.spi.v1.util.DisplayPropertiesUtil;
+import com.microsoft.azure.management.compute.VirtualMachine;
+import com.microsoft.azure.management.compute.implementation.ImageReferenceInner;
+import com.microsoft.azure.management.network.PublicIPAddress;
 
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,47 +34,52 @@ import java.util.Map;
 /**
  * Azure compute instances.
  */
-public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeInstanceTemplate,
-  AzureComputeInstanceHelper> {
+public class AzureComputeInstance
+    extends AbstractComputeInstance<AzureComputeInstanceTemplate, VirtualMachine> {
 
   /**
    * The list of display properties (including inherited properties).
    */
-  private static final List<DisplayProperty> DISPLAY_PROPERTIES =
-    DisplayPropertiesUtil.asDisplayPropertyList(AzureComputeInstanceDisplayPropertyToken.values());
-  private final AzureComputeInstanceHelper instanceHelper;
+  private static final List<DisplayProperty> DISPLAY_PROPERTIES = DisplayPropertiesUtil
+      .asDisplayPropertyList(AzureComputeInstanceDisplayPropertyToken.values());
 
-  public static List<DisplayProperty> getDisplayProperties() {
-    return DISPLAY_PROPERTIES;
-  }
+  private static final Type TYPE = new ResourceType("AzureComputeInstance");
+
+  private final VirtualMachine instanceDetails;
 
   public enum AzureComputeInstanceDisplayPropertyToken implements DisplayPropertyToken {
 
+    /**
+     * The ID of the image used to launch the instance.
+     */
     IMAGE_ID(new SimpleDisplayPropertyBuilder()
-      .displayKey("imageId")
-      .name("Image ID")
-      .defaultDescription("The ID of the image used to launch the instance.")
+        .displayKey("imageId")
+        .name("Image ID")
+        .defaultDescription("The ID of the image used to launch the instance.")
+        .build()) {
 
-
-      .build()) {
       @Override
-      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
-        return instanceHelper.getImageReference();
+      protected String getPropertyValue(VirtualMachine vm) {
+        ImageReferenceInner image = vm.storageProfile().imageReference();
+        return String.format("Region: %s; Publisher: %s; Offer: %s; SKU: %s; Version: %s;",
+            vm.regionName(), image.publisher(), image.sku(), image.offer(), image.version());
       }
     },
 
     /**
-     * The ID of the instance. For display purposes we return VM name instead
-     * of the return from getInstanceID.
+     * The ID of the instance along with supplemental information in the format:
+     *   /subscriptions/<subscription UUID>/resourceGroups/<RG name>/providers
+     *   /Microsoft.Compute/virtualMachines/<prefix>-<instanceIdUUID>
      */
     INSTANCE_ID(new SimpleDisplayPropertyBuilder()
-      .displayKey("instanceId")
-      .name("Instance ID")
-      .defaultDescription("The ID of the instance.")
-      .build()) {
+        .displayKey("instanceId")
+        .name("Instance ID")
+        .defaultDescription("The ID of the instance.")
+        .build()) {
+
       @Override
-      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
-        return instanceHelper.getVMName();
+      protected String getPropertyValue(VirtualMachine vm) {
+        return vm.name();
       }
     },
 
@@ -78,13 +87,14 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
      * The instance type.
      */
     INSTANCE_TYPE(new SimpleDisplayPropertyBuilder()
-      .displayKey("instanceType")
-      .name("Machine type")
-      .defaultDescription("The instance type.")
-      .build()) {
+        .displayKey("instanceType")
+        .name("Machine type")
+        .defaultDescription("The instance type.")
+        .build()) {
+
       @Override
-      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
-        return instanceHelper.getInstanceType();
+      protected String getPropertyValue(VirtualMachine vm) {
+        return vm.size().toString();
       }
     },
 
@@ -92,27 +102,29 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
      * The private IP address assigned to the instance.
      */
     PRIVATE_IP_ADDRESS(new SimpleDisplayPropertyBuilder()
-      .displayKey("privateIpAddress")
-      .name("Internal IP")
-      .defaultDescription("The private IP address assigned to the instance.")
-      .build()) {
+        .displayKey("privateIpAddress")
+        .name("Internal IP")
+        .defaultDescription("The private IP address assigned to the instance.")
+        .build()) {
+
       @Override
-      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
-        return instanceHelper.getPrivateIpAddress().getHostAddress();
+      protected String getPropertyValue(VirtualMachine vm) {
+        return vm.getPrimaryNetworkInterface().primaryPrivateIP();
       }
     },
 
     /**
-     * The private FQDN for each host
+     * The private FQDN for each host.
      */
     PRIVATE_FQDN(new SimpleDisplayPropertyBuilder()
-      .displayKey("privateFqdn")
-      .name("Private FQDN")
-      .defaultDescription("The private FQDN for each host.")
-      .build()) {
+        .displayKey("privateFqdn")
+        .name("Private FQDN")
+        .defaultDescription("The private FQDN for each host.")
+        .build()) {
+
       @Override
-      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
-        return instanceHelper.getPrivateFqdn();
+      protected String getPropertyValue(VirtualMachine vm) {
+        return vm.getPrimaryNetworkInterface().internalFqdn();
       }
     },
 
@@ -120,28 +132,31 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
      * The public IP address assigned to the instance.
      */
     PUBLIC_IP_ADDRESS(new SimpleDisplayPropertyBuilder()
-      .displayKey("publicIpAddress")
-      .name("Public IP")
-      .defaultDescription("The public IP address assigned to the instance.")
-      .build()) {
+        .displayKey("publicIpAddress")
+        .name("Public IP")
+        .defaultDescription("The public IP address assigned to the instance.")
+        .build()) {
+
       @Override
-      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
-        InetAddress publicIp = instanceHelper.getPublicIpAddress();
-        return (publicIp == null) ? null : publicIp.getHostAddress();
+      protected String getPropertyValue(VirtualMachine vm) {
+        PublicIPAddress publicIp = vm.getPrimaryPublicIPAddress();
+        return publicIp == null ? null : publicIp.ipAddress();
       }
     },
 
     /**
-     * The public FQDN for each host
+     * The public FQDN for each host.
      */
     PUBLIC_FQDN(new SimpleDisplayPropertyBuilder()
-      .displayKey("publicFqdn")
-      .name("Public FQDN")
-      .defaultDescription("The public FQDN for each host.")
-      .build()) {
+        .displayKey("publicFqdn")
+        .name("Public FQDN")
+        .defaultDescription("The public FQDN for each host.")
+        .build()) {
+
       @Override
-      protected String getPropertyValue(AzureComputeInstanceHelper instanceHelper) {
-        return instanceHelper.getPublicFqdn();
+      protected String getPropertyValue(VirtualMachine vm) {
+        PublicIPAddress publicIp = vm.getPrimaryPublicIPAddress();
+        return publicIp == null ? null : publicIp.fqdn();
       }
     };
 
@@ -162,10 +177,10 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
     /**
      * Returns the value of the property from the specified instance.
      *
-     * @param instanceHelper the wrapper around Azure compute instance
+     * @param vm the Azure VM
      * @return the value of the property from the specified instance
      */
-    protected abstract String getPropertyValue(AzureComputeInstanceHelper instanceHelper);
+    protected abstract String getPropertyValue(VirtualMachine vm);
 
     @Override
     public DisplayProperty unwrap() {
@@ -173,19 +188,40 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
     }
   }
 
-  public static final Type TYPE = new ResourceType("AzureComputeInstance");
+  /**
+   * Creates an Azure compute instance with the specified parameters.
+   *
+   * FIXME double check our assumptions with Director and MSFT
+   * Assumptions: Storing the VirtualMachine object as instanceDetails here is essentially doing the
+   * same thing as plugin v1.0. I.e. VirtualMachine contains the cached version of all information
+   * (name, private IP, public IP etc) returned by the find() query. Having AzureComputeInstance
+   * actively reach out to Azure to get the latest information is not necessary unless proven so.
+   *
+   * @param template Azure compute instance template used to get user provided fields
+   * @param instanceId the instance identifier
+   * @param instanceDetails the provider-specific instance details used to populate all of the
+   * fields in AzureComputeInstance
+   * @throws IllegalArgumentException if the instance does not have a valid private IP
+   */
+  public AzureComputeInstance(AzureComputeInstanceTemplate template, String instanceId,
+      VirtualMachine instanceDetails) {
+    super(template, instanceId, getPrivateIpAddress(instanceDetails), null, instanceDetails);
 
-
-  public AzureComputeInstance(AzureComputeInstanceTemplate template, String instanceId, AzureComputeInstanceHelper
-    instanceHelper) {
-    super(template, instanceId, instanceHelper.getPrivateIpAddress(), null, instanceHelper);
-
-    this.instanceHelper = instanceHelper;
+    this.instanceDetails = instanceDetails;
   }
 
   @Override
   public InetAddress getPrivateIpAddress() {
-    return instanceHelper.getPrivateIpAddress();
+    return getPrivateIpAddress(instanceDetails);
+  }
+
+  /**
+   * Gets the list of display properties for an Azure instance, including inherited properties.
+   *
+   * @return the list of display properties
+   */
+  public static List<DisplayProperty> getDisplayProperties() {
+    return DISPLAY_PROPERTIES;
   }
 
   @Override
@@ -195,10 +231,36 @@ public class AzureComputeInstance extends AbstractComputeInstance<AzureComputeIn
 
   @Override
   public Map<String, String> getProperties() {
-    Map<String, String> properties = new HashMap<String, String>();
-    for (AzureComputeInstanceDisplayPropertyToken propertyToken : AzureComputeInstanceDisplayPropertyToken.values()) {
-      properties.put(propertyToken.unwrap().getDisplayKey(), propertyToken.getPropertyValue(instanceHelper));
+    Map<String, String> properties = new HashMap<>();
+    for (AzureComputeInstanceDisplayPropertyToken propertyToken :
+        AzureComputeInstanceDisplayPropertyToken.values()) {
+      properties.put(propertyToken.unwrap().getDisplayKey(),
+          propertyToken.getPropertyValue(instanceDetails));
     }
     return properties;
+  }
+
+  /**
+   * Returns the private IP address of the specified Azure instance.
+   *
+   * @param instance the instance
+   * @return the private IP address of the specified Azure instance
+   * @throws IllegalArgumentException if the instance does not have a valid private IP address
+   */
+  private static InetAddress getPrivateIpAddress(VirtualMachine instance) {
+    try {
+      return InetAddress.getByName(instance.getPrimaryNetworkInterface().primaryPrivateIP());
+    } catch (UnknownHostException e) {
+      throw new IllegalArgumentException("Invalid private IP address", e);
+    }
+  }
+
+  /**
+   * Returns the embedded VirtualMachine object that contains detailed information for the VM.
+   *
+   * @return embedded VirtualMachine object that contains detailed information for the VM
+   */
+  public VirtualMachine getInstanceDetails() {
+    return instanceDetails;
   }
 }

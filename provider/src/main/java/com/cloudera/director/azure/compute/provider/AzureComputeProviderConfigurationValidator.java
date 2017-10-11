@@ -24,47 +24,51 @@ import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-
 import com.typesafe.config.Config;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Verifies AzureComputeProvider configuration to make sure user selected a region that supports
- * Premium Storage.
+ * Verifies the selected region supports Premium Storage.
  */
 public class AzureComputeProviderConfigurationValidator implements ConfigurationValidator {
-  private static final Logger LOG = LoggerFactory.getLogger(AzureComputeProviderConfigurationValidator.class);
 
-  static final String REGION_NOT_SUPPORTED_MSG =
-    "Region '%s' is not supported. Use a region from this list: %s";
+  private static final Logger LOG =
+      LoggerFactory.getLogger(AzureComputeProviderConfigurationValidator.class);
 
   @Override
   public void validate(String name, Configured configuration,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
     checkPremiumStorage(configuration, accumulator, localizationContext);
   }
 
   /**
-   * Check to make sure user provided region is supports premium storage.
+   * Checks to make sure user provided region is supports premium storage by checking the selected
+   * region against the list of supported regions in the plugin config.
    *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
+   * @param directorConfig Director config, used to get the selected region
+   * @param accumulator error accumulator
    * @param localizationContext localization context to extract config
    */
   void checkPremiumStorage(Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
-    Config pluginConfigProviderSection = AzurePluginConfigHelper.getAzurePluginConfigProviderSection();
-    String regionName =
-      directorConfig.getConfigurationValue(AzureComputeProviderConfigurationProperty.REGION,
-        localizationContext);
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
+    final String regionNotSupportedMsg =
+        "Region '%s' is not supported. Use a region from this list: %s";
+
+    Config pluginConfigProviderSection = AzurePluginConfigHelper
+        .getAzurePluginConfigProviderSection();
+    String regionName = directorConfig
+        .getConfigurationValue(
+            AzureComputeProviderConfigurationProperty.REGION, localizationContext);
+
     if (!pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS)
-      .contains(regionName)) {
-      LOG.error(String.format(REGION_NOT_SUPPORTED_MSG, regionName,
-        pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS)));
+        .contains(regionName)) {
+      LOG.error(String.format(regionNotSupportedMsg, regionName,
+          pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS)));
       addError(accumulator, AzureComputeProviderConfigurationProperty.REGION, localizationContext,
-        null, REGION_NOT_SUPPORTED_MSG, regionName,
-        pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS));
+          null, regionNotSupportedMsg, regionName,
+          pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS));
     }
   }
 }

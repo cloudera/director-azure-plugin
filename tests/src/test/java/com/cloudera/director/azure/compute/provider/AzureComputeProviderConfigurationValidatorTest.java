@@ -16,64 +16,69 @@
 
 package com.cloudera.director.azure.compute.provider;
 
-import com.cloudera.director.azure.TestConfigHelper;
 import com.cloudera.director.azure.Configurations;
+import com.cloudera.director.azure.TestHelper;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
 import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
 
-import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 
-import static org.junit.Assert.assertTrue;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
 
 /**
- * Simple test to verify AzureComputeProviderConfigurationValidatorTest class.
+ * AzureComputeProviderConfigurationValidator tests.
  */
 public class AzureComputeProviderConfigurationValidatorTest {
-  private LocalizationContext localizationContext;
-  private TestConfigHelper cfgHelper = new TestConfigHelper();
+
+  // Fields used by checks
   private ConfigurationValidator validator;
   private PluginExceptionConditionAccumulator accumulator;
+  private LocalizationContext localizationContext;
 
   @Before
   public void setUp() throws Exception {
-    TestConfigHelper.seedAzurePluginConfigWithDefaults();
+    // Reset the plugin config with the default config.
+    AzurePluginConfigHelper.setAzurePluginConfig(AzurePluginConfigHelper
+        .parseConfigFromClasspath(Configurations.AZURE_CONFIG_FILENAME));
+    AzurePluginConfigHelper.setConfigurableImages(AzurePluginConfigHelper
+        .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE));
 
-    localizationContext= new DefaultLocalizationContext(Locale.getDefault(), "");
     validator = new AzureComputeProviderConfigurationValidator();
     accumulator = new PluginExceptionConditionAccumulator();
+    localizationContext = new DefaultLocalizationContext(Locale.getDefault(), "");
   }
 
   @After
-  public void tearDown() throws Exception {
-    localizationContext= null;
-    validator = null;
-    accumulator = null;
+  public void reset() throws Exception {
+    accumulator.getConditionsByKey().clear();
+
+    TestHelper.setAzurePluginConfigNull();
+    TestHelper.setConfigurableImagesNull();
   }
 
   @Test
-  public void testValidRegionConfig() throws Exception {
-    // All should be well
-    validator.validate(null, cfgHelper.getProviderConfig(), accumulator, localizationContext);
-    assertTrue(accumulator.getConditionsByKey().isEmpty());
+  public void validateWithDefaultsExpectSuccess() throws Exception {
+    validator.validate(null, TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
+        localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
   }
 
   @Test
-  public void testInvalidRegionConfig() throws Exception {
-    // build a config with bogus region
-    Map<String, String> cfgMap = new HashMap<String, String>();
-    cfgMap.put("region", "foobar");
+  public void validateWithInvalidRegionExpectAccumulatesErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeProviderConfigurationProperty.REGION.unwrap().getConfigKey(),
+        "fake-region");
 
-    // validator should catch the error
-    validator.validate(null, new SimpleConfiguration(cfgMap), accumulator, localizationContext);
-    assertTrue(accumulator.getConditionsByKey().size() == 1);
+    validator.validate(null, new SimpleConfiguration(map), accumulator,
+        localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
   }
 }

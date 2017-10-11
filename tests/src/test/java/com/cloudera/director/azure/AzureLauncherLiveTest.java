@@ -16,58 +16,66 @@
 
 package com.cloudera.director.azure;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeTrue;
+
 import com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
 import com.cloudera.director.spi.v1.provider.CloudProvider;
 import com.cloudera.director.spi.v1.provider.CloudProviderMetadata;
 import com.cloudera.director.spi.v1.provider.Launcher;
-import org.junit.Test;
 
+import java.io.File;
 import java.util.List;
 import java.util.Locale;
 
-import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.*;
-import static junit.framework.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assume.assumeTrue;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 /**
- * Live tests to verify AzureLauncher.
+ * AzureLauncher live tests.
+ *
+ * These tests do not try to authenticate with Azure, only set up the objects. See
+ * AzureCloudProviderLiveTest for tests that authenticate.
  */
 public class AzureLauncherLiveTest {
 
+  @BeforeClass
+  public static void checkLiveTestFlag() {
+    assumeTrue(TestHelper.runLiveTests());
+  }
+
   @Test
-  public void testCreateCloudProvider() throws Exception {
-    // skip the test if live test flag is not set
-    assumeTrue(TestConfigHelper.runLiveTests());
-
+  public void createCloudProviderWithValidFieldsExpectSuccess() throws Exception {
     Launcher launcher = new AzureLauncher();
-    launcher.initialize(null, null);
-
+    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
     assertEquals(1, launcher.getCloudProviderMetadata().size());
-    CloudProviderMetadata metadata = launcher.getCloudProviderMetadata().get(0);
 
+    CloudProviderMetadata metadata = launcher.getCloudProviderMetadata().get(0);
     assertEquals(AzureCloudProvider.ID, metadata.getId());
 
-    List<ConfigurationProperty> credentialsConfigProperties =
-        metadata.getCredentialsProviderMetadata().getCredentialsConfigurationProperties();
+    List<ConfigurationProperty> providerConfigurationProperties = metadata
+        .getProviderConfigurationProperties();
+    assertEquals(0, providerConfigurationProperties.size());
+
     // See AzureCredentialsConfiguration
-    assertEquals(AzureCredentialsConfiguration.values().length, credentialsConfigProperties.size());
-    assertTrue(credentialsConfigProperties.contains(MGMT_URL.unwrap()));
-    assertTrue(credentialsConfigProperties.contains(SUBSCRIPTION_ID.unwrap()));
-    assertTrue(credentialsConfigProperties.contains(AAD_URL.unwrap()));
-    assertTrue(credentialsConfigProperties.contains(TENANT_ID.unwrap()));
-    assertTrue(credentialsConfigProperties.contains(CLIENT_ID.unwrap()));
-    assertTrue(credentialsConfigProperties.contains(CLIENT_SECRET.unwrap()));
+    List<ConfigurationProperty> credentialsConfigurationProperties = metadata
+        .getCredentialsProviderMetadata().getCredentialsConfigurationProperties();
+    assertEquals(6, credentialsConfigurationProperties.size());
+    assertTrue(credentialsConfigurationProperties.contains(
+        AzureCredentialsConfiguration.AZURE_CLOUD_ENVIRONMENT.unwrap()));
+    assertTrue(credentialsConfigurationProperties.contains(
+        AzureCredentialsConfiguration.SUBSCRIPTION_ID.unwrap()));
+    assertTrue(credentialsConfigurationProperties.contains(
+        AzureCredentialsConfiguration.TENANT_ID.unwrap()));
+    assertTrue(credentialsConfigurationProperties.contains(
+        AzureCredentialsConfiguration.CLIENT_ID.unwrap()));
+    assertTrue(credentialsConfigurationProperties.contains(
+        AzureCredentialsConfiguration.CLIENT_SECRET.unwrap()));
 
-    // Pull credentials from the "provider" section in sample config
-    TestConfigHelper cfgHelper = new TestConfigHelper();
-
-    // WARNING This actually reaches out to Azure backend
-    CloudProvider cloudProvider = launcher.createCloudProvider(
-        AzureCloudProvider.ID,
-        cfgHelper.getProviderConfig(),
-        Locale.getDefault());
+    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+        TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
     assertEquals(AzureCloudProvider.class, cloudProvider.getClass());
   }
 }

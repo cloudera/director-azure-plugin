@@ -16,31 +16,31 @@
 
 package com.cloudera.director.azure.compute.instance;
 
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE;
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES;
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES;
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX;
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX;
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES;
-import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED;
-import static com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE;
-import static com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME;
 import static com.cloudera.director.spi.v1.model.util.Validations.addError;
 
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
-import com.cloudera.director.azure.compute.provider.AzureComputeProviderHelper;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.azure.utils.AzureVmImageInfo;
+import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v1.model.ConfigurationValidator;
+import com.cloudera.director.spi.v1.model.Configured;
+import com.cloudera.director.spi.v1.model.InstanceTemplate;
+import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.microsoft.azure.management.compute.models.VirtualMachineSize;
-import com.microsoft.azure.management.storage.models.AccountType;
-import com.microsoft.windowsazure.exception.ServiceException;
-import com.typesafe.config.Config;
+import com.cloudera.director.spi.v1.model.exception.ValidationException;
+import com.microsoft.azure.CloudException;
+import com.microsoft.azure.management.Azure;
+import com.microsoft.azure.management.compute.AvailabilitySet;
+import com.microsoft.azure.management.compute.AvailabilitySetSkuTypes;
+import com.microsoft.azure.management.compute.ImageReference;
+import com.microsoft.azure.management.compute.VirtualMachineCustomImage;
+import com.microsoft.azure.management.compute.VirtualMachineSize;
+import com.microsoft.azure.management.graphrbac.ActiveDirectoryGroup;
+import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
+import com.microsoft.azure.management.network.Network;
+import com.microsoft.azure.management.storage.SkuName;
 
-import java.io.IOException;
-import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
@@ -48,711 +48,828 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-
-
-import com.cloudera.director.spi.v1.model.ConfigurationValidator;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.InstanceTemplate;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.typesafe.config.ConfigException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Validator for Azure Compute Instance configs. Entry point should be the validate method.
- * Validate method will get a new helper(token).
+ * Validator for Azure Compute Instance configs. Entry point is the validate method.
+ *
+ * Director does initial config validation to verify that all required fields exist and are the
+ * correct type.
  */
-@SuppressWarnings("PMD.TooManyStaticImports")
 public class AzureComputeInstanceTemplateConfigurationValidator implements ConfigurationValidator {
 
   private static final Logger LOG =
-    LoggerFactory.getLogger(AzureComputeInstanceTemplateConfigurationValidator.class);
+      LoggerFactory.getLogger(AzureComputeInstanceTemplateConfigurationValidator.class);
 
-  private Config pluginConfigInstanceSection;
-  private Config configurableImages;
-  private AzureCredentials credentials; // Credential to do Azure specific validations
+  // Credential to do Azure specific validations
+  private AzureCredentials credentials;
 
-  // The location represents the data center; some resource may be valid in one data center but not
-  // in others
-  private String location;
-
-  static final String VIRTUAL_MACHINE_MSG =
-    "Virtual machine '%s' is not supported. Consult the Cloudera Director " +
-    "documentation or Cloudera support for details on updating the " +
-    "Cloudera Director Azure plugin configuration, or to upgrade to the " +
-    "latest version of Cloudera Director.";
-  static final String INSTANCE_NAME_PREFIX_MSG =
-    "Instance name prefix '%s' does not satisfy Azure DNS label requirement: %s.";
-  static final String FQDN_SUFFIX_MSG =
-    "FQDN suffix '%s' does not satisfy Azure DNS name suffix requirement: '%s'.";
-  static final String VIRTUAL_NETWORK_RESOURCE_GROUP_MSG =
-    "Resource Group '%s' does not exist. Please create the Resource Group or use an existing one.";
-  static final String VIRTUAL_NETWORK_MSG =
-    "Virtual Network '%s' does not exist within the Resource Group '%s'. Please create the " +
-      "Virtual Network or use an existing one.";
-  static final String SUBNET_MSG =
-    "Subnet '%s' does not exist under the Virtual Network '%s'. Please create the subnet or use " +
-      "an existing one.";
-  static final String NETWORK_SECURITY_GROUP_RESOURCE_GROUP_MSG =
-    "Resource Group '%s' does not exist. Please create the Resource Group or use an existing one.";
-  static final String NETWORK_SECURITY_GROUP_MSG =
-    "Network Security Group '%s' does not exist within the Resource Group '%s'. Please create " +
-      "the Network Security Group or use an existing one.";
-  static final String AVAILABILITY_SET_MSG =
-    "Availability Set '%s' does not exist in Resource Group '%s'. Please create the Availability " +
-      "Set or use an existing one.";
-  static final String AVAILABILITY_SET_MISMATCH_MSG =
-    "Virtual Machine size '%s' is not allowed in Availability Set '%s'. Different versions of " +
-      "the same VM size (e.g. v2 vs. non-v2) cannot coexist in the same Availability Set. Use a " +
-      "different Availability Set or use a VM size from this list: '%s'";
-  static final String AVAILABILITY_SET_MISMATCH_DETAILED_MSG =
-    "Virtual Machine size '%s' is not allowed in Availability Set '%s'. Different versions of " +
-      "the same VM size (e.g. v2 vs. non-v2) cannot coexist in the same Availability Set. An " +
-      "Availability Set should be dedicated to a specific cluster and node type. Use a " +
-      "different Availability Set or use a VM size from this list: '%s'";
-  static final String RESOURCE_GROUP_MSG =
-    "Resource Group '%s' does not exist. Please create the Resource Group or use an existing one.";
-  static final String VN_NOT_IN_LOCATION_MSG =
-    "Virtual Network '%s' is not in location '%s'. Use a virtual network from that location.";
-  static final String NSG_NOT_IN_LOCATION_MSG =
-    "Network Security Group '%s' is not in location '%s'. Use a network security group set from " +
-      "that location.";
-  static final String AS_NOT_IN_LOCATION_MSG =
-    "Availability Set '%s' is not in location '%s'. Use an availability set from that location.";
-  static final String IMAGE_MISSING_IN_AZURE_MSG =
-    "IMAGE '%s' does not exist in Azure. Please verify the input.";
-  static final String IMAGE_MISSING_IN_CONFIG_MSG =
-    "IMAGE '%s' does not exist in configurable image list. Please verify the input.";
-  static final String STORAGE_ACCOUNT_TYPES_MSG =
-    "Storage Account Type '%s' is not supported. Supported types: %s.";
-  static final String INVALID_STORAGE_ACCOUNT_TYPE_MSG =
-    "Storage Account Type '%s' is not a valid Azure Storage Account Type. Valid types: '%s'";
-  static final String PREMIUM_DISK_SIZE_MISSING_IN_CONFIG_MSG =
-    "Premium disk size '%s' is not supported. Supported sizes: %s.";
-  static final String STANDARD_DISK_SIZE_GREATER_THAN_MAX_MSG =
-    "Disk size '%s' is invalid. It must be less than or equal to %s.";
-  static final String STANDARD_DISK_SIZE_LESS_THAN_MIN_MSG =
-    "Disk size '%s' is invalid. It must be greater than 0.";
-  static final String NO_DISK_VALIDATIONS_MSG =
-    "Disk size is not validated for storage type '%s'.";
-  static final String IMAGE_CFG_MISSING_REQUIRED_FIELD_MSG =
-    "IMAGE '%s' config does not have all required fields. Please check plugin config file.";
-  static final String COMMUNICATION_MSG =
-    "Cannot communicate with Azure due to IOException while validating: '%s'.";
-  static final String ILLEGAL_ARGUMENT_EXCEPTION_MSG =
-    "IllegalArgumentException occurred while validating: '%s'. " +
-      "Please check permissions, existence, spelling, etc.";
-  static final String DISALLOWED_USERNAMES_MSG =
-    "Username '%s' is not allowed.";
-  static final String DISALLOWED_USERNAMES_DETAILED_MSG =
-    "Username '%s' is not allowed. Disallowed usernames: '%s'";
-  static final String GENERIC_MSG = "Exception occurred during validation";
+  // The region represents the data center; some resource may be valid in one data center but not
+  // in others.
+  private String region;
 
   /**
-   * @param credentials                 credential object to get helper for Azure SDK calls
-   * @param location                    deployment location/region
+   * Builds a validator.
+   *
+   * @param credentials credential object to get helper for Azure SDK calls
+   * @param region the deployment region
    */
-  public AzureComputeInstanceTemplateConfigurationValidator(
-    AzureCredentials credentials, String location) {
+  public AzureComputeInstanceTemplateConfigurationValidator(AzureCredentials credentials,
+      String region) {
     this.credentials = credentials;
-    this.location = location;
-    this.pluginConfigInstanceSection = AzurePluginConfigHelper
-      .getAzurePluginConfigInstanceSection();
-    this.configurableImages = AzurePluginConfigHelper.getConfigurableImages();
+    this.region = region;
   }
 
   /**
-   * Validate template configuration with Azure backend. Get a new helper object per method call
-   * to ensure the token held by the helper doesn't expire
-   * @param name
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
+   * Validates template configuration including checks that rely on the Azure backend. Before
+   * calling this method Director has already done initial config validation to verify that all
+   * required fields exist and are the correct type.
+   *
+   * @param name not used
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
    * @param localizationContext localization context to extract config
    */
   @Override
   public void validate(String name, Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
+    final String genericErrorMsg = "Error occurred during validating: %s";
 
-    // Local checks
+    // Checks that don't reach out to the Azure backend.
     checkVMSize(directorConfig, accumulator, localizationContext);
     checkFQDNSuffix(directorConfig, accumulator, localizationContext);
     checkInstancePrefix(directorConfig, accumulator, localizationContext);
     checkStorage(directorConfig, accumulator, localizationContext);
     checkSshUsername(directorConfig, accumulator, localizationContext);
 
-    /*
-     * Azure backend checks: These checks verifies the resources specified in instance template
-     * do exist in Azure. Defensive code to catch all Exceptions thrown from Azure SDK so they
-     * can be reported properly.
-     */
+    // Azure backend checks: These checks verifies the resources specified in instance template do
+    // exist in Azure.
     try {
-      AzureComputeProviderHelper helper = credentials.getComputeProviderHelper();
-      checkResourceGroup(directorConfig, accumulator, localizationContext, helper);
-      checkVirtualNetworkResourceGroup(directorConfig, accumulator, localizationContext,
-        helper);
-      checkVirtualNetwork(directorConfig, accumulator, localizationContext, helper);
-      checkSubnet(directorConfig, accumulator, localizationContext, helper);
-      checkNetworkSecurityGroupResourceGroup(directorConfig, accumulator, localizationContext,
-        helper);
-      checkNetworkSecurityGroup(directorConfig, accumulator, localizationContext, helper);
-      checkAvailabilitySet(directorConfig, accumulator, localizationContext, helper);
-      checkVmImage(directorConfig, accumulator, localizationContext, helper);
-    } catch (Exception e) {
-      LOG.error(GENERIC_MSG, e);
+      Azure azure = credentials.authenticate();
 
-      //use null key to indicate generic error
-      ConfigurationPropertyToken token =null;
-      addError(accumulator, token, localizationContext, null, GENERIC_MSG);
+      checkComputeResourceGroup(directorConfig, accumulator, localizationContext, azure);
+      checkNetwork(directorConfig, accumulator, localizationContext, azure);
+      checkNetworkSecurityGroupResourceGroup(directorConfig, accumulator, localizationContext,
+          azure);
+      checkNetworkSecurityGroup(directorConfig, accumulator, localizationContext, azure);
+      checkAvailabilitySetAndManagedDisks(directorConfig, accumulator, localizationContext, azure);
+      checkVmImage(directorConfig, accumulator, localizationContext, azure);
+      checkUseCustomImage(directorConfig, accumulator, localizationContext, azure);
+      checkImplicitMsiGroupName(directorConfig, accumulator, localizationContext);
+    } catch (Exception e) {
+      LOG.error(genericErrorMsg, e);
+      // use null key to indicate generic error
+      ConfigurationPropertyToken token = null;
+      addError(accumulator, token, localizationContext, null, genericErrorMsg, e);
     }
   }
 
   /**
-   * Check to make sure VM size (type) is supported.
+   * Checks to make sure VM size (type) is supported.
    *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
    * @param localizationContext localization context to extract config
    */
   void checkVMSize(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
+    final String virtualMachineMsg = "Virtual Machine '%s' is not supported. For the latest " +
+        "supported Virtual Machines consult the Cloudera Director documentation or Cloudera " +
+        "support for details on updating the Cloudera Director Azure plugin configuration, or to " +
+        "upgrade to the latest version of Cloudera Director.";
+
     String vmSize = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, localizationContext);
+        AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, localizationContext);
 
-    if (!pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_SUPPORTED)
-      .contains(vmSize)) {
-      LOG.error(String.format(VIRTUAL_MACHINE_MSG, vmSize));
+    if (!AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+        .getStringList(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED)
+        .contains(vmSize)) {
+      LOG.error(String.format(virtualMachineMsg, vmSize));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
-        localizationContext, null, VIRTUAL_MACHINE_MSG, vmSize);
+          localizationContext, null, virtualMachineMsg, vmSize);
     }
   }
 
   /**
-   * Check that the Resource Group exists in Azure.
-   * For certain fields - e.g. Virtual Network, Network Security Group - the Resource Group
-   * is specified separately.
-   * <p>
-   * Azure will throw an exception if it can't find the Resource Group.
+   * Checks to make sure FQDN suffix satisfies Azure DNS label and hostname requirements.
    *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkResourceGroup(Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
-    AzureComputeProviderHelper helper) {
-    String rgName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP, localizationContext);
-
-    try {
-      helper.getResourceGroup(rgName);
-    } catch (ServiceException | IOException | URISyntaxException e) {
-      String message;
-      if (e instanceof IOException) {
-        message = COMMUNICATION_MSG;
-      } else {
-        message = RESOURCE_GROUP_MSG;
-      }
-      LOG.error(String.format(message, rgName));
-      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
-        localizationContext, null, message, rgName);
-    }
-  }
-
-  /**
-   * Check that the Virtual Network Resource Group exists in Azure.
-   * This Resource Group defines where to look for the Virtual Network.
-   * <p>
-   * Azure will throw an exception if it can't find the Resource Group.
-   *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkVirtualNetworkResourceGroup(Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
-    AzureComputeProviderHelper helper) {
-    String vnrgName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP,
-      localizationContext);
-
-    try {
-      helper.getResourceGroup(vnrgName);
-    } catch (IOException | ServiceException | URISyntaxException e) {
-      String message;
-      if (e instanceof IOException) {
-        message = COMMUNICATION_MSG;
-      } else {
-        message = VIRTUAL_NETWORK_RESOURCE_GROUP_MSG;
-      }
-      LOG.error(String.format(message, vnrgName));
-      addError(accumulator,
-        AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP,
-        localizationContext, null, message, vnrgName);
-    }
-  }
-
-  /**
-   * Check that the Virtual Network exists in Azure.
-   * <p>
-   * Azure will throw an exception if it can't find the Virtual Network.
-   *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkVirtualNetwork(Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
-    AzureComputeProviderHelper helper) {
-    String vnName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK, localizationContext);
-    String vnrgName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP,
-      localizationContext);
-
-    try {
-      String loc = helper.getVirtualNetworkByName(vnrgName, vnName).getLocation();
-
-      // check that the VN is in the environment's location
-      if (!this.location.equalsIgnoreCase(loc)) {
-        LOG.error(String.format(VN_NOT_IN_LOCATION_MSG, vnName, this.location));
-        addError(accumulator,
-          AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK,
-          localizationContext, null, VN_NOT_IN_LOCATION_MSG, vnName, this.location);
-      }
-    } catch (IOException | ServiceException e) {
-      String message;
-      if (e instanceof IOException) {
-        message = COMMUNICATION_MSG;
-      } else {
-        message = VIRTUAL_NETWORK_MSG;
-      }
-      LOG.error(String.format(message, vnName, vnrgName));
-      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK,
-        localizationContext, null, message, vnName, vnrgName);
-    }
-  }
-
-  /**
-   * Check that the subnet exists under the Virtual Network in Azure.
-   * <p>
-   * Azure will throw an exception if it can't find the subnet.
-   *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkSubnet(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext, AzureComputeProviderHelper helper) {
-    String vnName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK, localizationContext);
-    String vnrgName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP,
-      localizationContext);
-    String subnetName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME,
-      localizationContext);
-
-    try {
-      helper.getSubnetByName(vnrgName, vnName, subnetName);
-    } catch (IOException | ServiceException e) {
-      String message;
-      if (e instanceof IOException) {
-        message = COMMUNICATION_MSG;
-      } else {
-        message = SUBNET_MSG;
-      }
-      LOG.error(String.format(message, subnetName, vnrgName));
-      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME,
-        localizationContext, null, message, subnetName, vnName);
-    }
-  }
-
-  /**
-   * Check to make sure FQDN suffix satisfies Azure DNS label and hostname requirements.
-   *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
    * @param localizationContext localization context to extract config
    */
   void checkFQDNSuffix(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
+    final String fqdnSuffixMsg = "FQDN suffix '%s' does not satisfy Azure DNS name suffix " +
+        "requirement: '%s'.";
+
     String suffix = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX, localizationContext);
-    String regex = pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX);
+        AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX, localizationContext);
+
+    // if no fqdn suffix was specified then short-circuit
+    if (suffix == null || suffix.trim().isEmpty()) {
+      // short-circuit return
+      return;
+    }
+
+    String regex = AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+        .getString(Configurations.AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX);
     Pattern pattern = Pattern.compile(regex);
     Matcher matcher = pattern.matcher(suffix);
 
     if (!matcher.find()) {
-      LOG.error(String.format(FQDN_SUFFIX_MSG, suffix, regex));
+      LOG.error(String.format(fqdnSuffixMsg, suffix, regex));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX,
-        localizationContext, null, FQDN_SUFFIX_MSG, suffix, regex);
+          localizationContext, null, fqdnSuffixMsg, suffix, regex);
     }
   }
 
   /**
-   * Check that the Resource Group exists in Azure.
-   * This Resource Group defines where to look for the Network Security Group.
-   * <p>
-   * Azure will throw an exception if it can't find the Resource Group.
+   * Checks to make sure instance name prefix satisfies Azure DNS label requirements.
    *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkNetworkSecurityGroupResourceGroup(Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
-    AzureComputeProviderHelper helper) {
-    String nsgrgName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP,
-      localizationContext);
-
-    try {
-      helper.getResourceGroup(nsgrgName);
-    } catch (IOException | ServiceException | URISyntaxException e) {
-      String message;
-      if (e instanceof IOException) {
-        message = COMMUNICATION_MSG;
-      } else {
-        message = NETWORK_SECURITY_GROUP_RESOURCE_GROUP_MSG;
-      }
-      LOG.error(String.format(message, nsgrgName));
-      addError(accumulator,
-        AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP,
-        localizationContext, null, message, nsgrgName);
-    }
-  }
-
-  /**
-   * Check that the Network Security Group exists within the Resource Group.
-   * <p>
-   * Azure will throw an exception if it can't find the Network Security Group.
-   *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkNetworkSecurityGroup(Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
-    AzureComputeProviderHelper helper) {
-    String nsgName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
-      localizationContext);
-    String nsgrgName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP,
-      localizationContext);
-
-    try {
-      String loc = helper.getNetworkSecurityGroupByName(nsgrgName, nsgName).getLocation();
-
-      // check that the NSG is in the environment's location
-      if (! this.location.equalsIgnoreCase(loc)) {
-        LOG.error(String.format(NSG_NOT_IN_LOCATION_MSG, nsgName, this.location));
-        addError(accumulator,
-          AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
-          localizationContext, null, NSG_NOT_IN_LOCATION_MSG, nsgName, this.location);
-      }
-    } catch (IOException | ServiceException e) {
-      String message;
-      if (e instanceof IOException) {
-        message = COMMUNICATION_MSG;
-      } else {
-        message = NETWORK_SECURITY_GROUP_MSG;
-      }
-      LOG.error(String.format(message, nsgName, nsgrgName));
-      addError(accumulator,
-        AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
-        localizationContext, null, message, nsgName, nsgrgName);
-    }
-  }
-
-  /**
-   * Check that the Availability Set exists in Azure and that the Availability Set supports the
-   * version of VM being created. Different versions of the same VM size (e.g. v2 vs. non-v2)
-   * cannot coexist in the same Availability Set.
-   * <p>
-   * Azure will throw an exception if it can't find the Availability Set.
-   *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkAvailabilitySet(Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
-    AzureComputeProviderHelper helper) {
-    String asName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET, localizationContext);
-    String computeRgName = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP, localizationContext);
-
-    // check that the AS exists and that the AS supports the version of VM being created
-    try {
-      String loc = helper.getAvailabilitySetByName(computeRgName, asName).getLocation();
-
-      // check that the AS is in the environment's location
-      if (! this.location.equalsIgnoreCase(loc)) {
-        LOG.error(String.format(AS_NOT_IN_LOCATION_MSG, asName, this.location));
-        addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
-          localizationContext, null, AS_NOT_IN_LOCATION_MSG, asName, this.location);
-      }
-
-      // check that the AS supports the family of VM being created
-      String vmSize = directorConfig
-        .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
-          localizationContext)
-        .toUpperCase();
-
-      // normalize the list
-      Set<String> clouderaSupportedVMSizes = new HashSet<>();
-      for (String vm : pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_SUPPORTED)) {
-        clouderaSupportedVMSizes.add(vm.toUpperCase());
-      }
-
-      // normalize the list (list pulled from Azure backend)
-      Set<String> azureSupportedVMSizes = new HashSet<>();
-      for (VirtualMachineSize vm : helper.getAvailableSizesInAS(computeRgName, asName)
-        .getVirtualMachineSizes()) {
-        azureSupportedVMSizes.add(vm.getName().toUpperCase());
-      }
-
-      // if the VM Size is not allowed in ths AS do set intersection to find the list of VM Sizes
-      // that it can be deployed into and propagate it back to the UI
-      if (!azureSupportedVMSizes.contains(vmSize)) {
-        // clouderaSupportedVMSizes ∩ azureSupportedVMSizes
-        clouderaSupportedVMSizes.retainAll(azureSupportedVMSizes);
-
-        LOG.error(String.format(AVAILABILITY_SET_MISMATCH_DETAILED_MSG, vmSize, asName,
-          clouderaSupportedVMSizes));
-        addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
-          localizationContext, null, AVAILABILITY_SET_MISMATCH_MSG, vmSize, asName,
-          clouderaSupportedVMSizes);
-      }
-    } catch (IOException | ServiceException | URISyntaxException e) {
-      String message;
-      if (e instanceof IOException) {
-        message = COMMUNICATION_MSG;
-      } else {
-        message = AVAILABILITY_SET_MSG;
-      }
-      LOG.error(String.format(message, asName, computeRgName));
-      addError(accumulator,
-        AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
-        localizationContext, null, message, asName, computeRgName);
-    }
-  }
-
-  /**
-   * Check to make sure instance name prefix satisfies Azure DNS label requirements.
-   *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
    * @param localizationContext localization context to extract config
    */
   void checkInstancePrefix(Configured directorConfig,
-    PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
+    final String instanceNamePrefixMsg =
+        "Instance name prefix '%s' does not satisfy Azure DNS label requirement: %s.";
+
     String instancePrefix = directorConfig.getConfigurationValue(
-      InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX,
-      localizationContext);
-    String regex = pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_DNS_LABEL_REGEX);
+        InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX,
+        localizationContext);
+    String regex = AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+        .getString(Configurations.AZURE_CONFIG_INSTANCE_PREFIX_REGEX);
     Pattern pattern = Pattern.compile(regex);
     Matcher matcher = pattern.matcher(instancePrefix);
 
     if (!matcher.find()) {
-      LOG.error(String.format(INSTANCE_NAME_PREFIX_MSG, instancePrefix, regex));
+      LOG.error(String.format(instanceNamePrefixMsg, instancePrefix, regex));
       addError(accumulator,
-        InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX,
-        localizationContext, null, INSTANCE_NAME_PREFIX_MSG, instancePrefix, regex);
+          InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX,
+          localizationContext, null, instanceNamePrefixMsg, instancePrefix, regex);
     }
   }
 
   /**
-   * Check if VM image is specified in the configurable images file. If so then verify if the image
-   * exists in Azure Marketplace.
+   * Checks that the Storage Account Type and the Data Disk Size are supported.
    *
-   * @param directorConfig      Director config
-   * @param accumulator         error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkVmImage(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext, AzureComputeProviderHelper helper) {
-    String imageName = directorConfig.getConfigurationValue(IMAGE, localizationContext);
-    Config imageCfg;
-    try {
-      imageCfg = configurableImages.getConfig(imageName);
-    } catch (ConfigException.Missing | ConfigException.WrongType e) {
-      LOG.error(String.format(IMAGE_MISSING_IN_CONFIG_MSG, imageName));
-      addError(accumulator, IMAGE, localizationContext, null, IMAGE_MISSING_IN_CONFIG_MSG,
-        imageName);
-      return;
-    }
-
-    String publisher;
-    String sku;
-    String offer;
-    String version;
-
-    try {
-      publisher = imageCfg.getString(Configurations.AZURE_IMAGE_PUBLISHER);
-      sku = imageCfg.getString(Configurations.AZURE_IMAGE_SKU);
-      offer = imageCfg.getString(Configurations.AZURE_IMAGE_OFFER);
-      version = imageCfg.getString(Configurations.AZURE_IMAGE_VERSION);
-    } catch (ConfigException.Missing | ConfigException.WrongType e) {
-      LOG.error(String.format(IMAGE_CFG_MISSING_REQUIRED_FIELD_MSG, imageName));
-      addError(accumulator, IMAGE, localizationContext, null, IMAGE_CFG_MISSING_REQUIRED_FIELD_MSG,
-        imageName);
-      return;
-    }
-
-    AzureVmImageInfo imageInfo = new AzureVmImageInfo(publisher, sku, offer, version);
-    try {
-      /*
-       * check if the image is available in the data center specified in the location.
-       * If service principle doesn't have at least read permission at the subscription level,
-       * an IllegalArgumentException may be thrown by the SDK.
-       */
-      helper.getMarketplaceVMImage(location, imageInfo);
-    } catch (ServiceException | IOException | URISyntaxException |
-      IllegalArgumentException e) {
-      String message;
-      if (e instanceof IOException) {
-        message = COMMUNICATION_MSG;
-      } else if (e instanceof IllegalArgumentException) {
-        message = ILLEGAL_ARGUMENT_EXCEPTION_MSG;
-      } else {
-        message = IMAGE_MISSING_IN_AZURE_MSG;
-      }
-      LOG.error(String.format(message, imageInfo.toString()));
-      addError(accumulator, IMAGE, localizationContext, null, message, imageInfo);
-    }
-  }
-
-  /**
-   * Check that the storage Account Type and the Data Disk Size are supported.
-   * <p>
    * By default the following Account Types are supported:
-   *   PremiumLRS
-   *   StandardLRS
-   * <p>
-   * By default the following PremiumLRS Data Disk Sizes are supported:
-   *   P20: 512
-   *   P30: 1023
+   * - Premium_LRS
+   * - Standard_LRS
+   *
+   * By default the following Premium_LRS Data Disk Sizes are supported:
+   * - P20: 512
+   * - P30: 1024
+   * - P40: 2048
+   * - P50: 4095
    * AZURE_SDK:
-   * P30 does not map to 1024 because 'dataDisk.diskSizeGB' must be between 1 and 1023 inclusive
+   * P50 does not map to 4096 because 'dataDisk.diskSizeGB' must be between 1 and 4095 inclusive
    * otherwise Azure will throw a ServiceException.
    * See https://azure.microsoft.com/en-us/documentation/articles/storage-premium-storage/
-   * <p>
-   * By default the following are the restrictions for StandardLRS Data Disk Sizes:
-   *   Minimum: >= 1 GB
-   *   Maximum: <= 1023
+   *
+   * By default the following are the restrictions for Disk Sizes:
+   * - Minimum: >= 1 GB
+   * - Maximum: <= 4095
    * AZURE_SDK:
-   * The limit is not 1024 because 'dataDisk.diskSizeGB' must be between 1 and 1023 inclusive for
+   * The limit is not 4096 because 'dataDisk.diskSizeGB' must be between 1 and 4095 inclusive for
    * Standard Storage disks.
-   * <p>
+   *
    * Non-default Account Types are not subject to any restrictions and are assumed to be correct.
    * Azure, however, will still throw an exception down the line if the values are incorrect.
-   * <p>
+   *
    * If a value is used that falls outside the range of acceptable values this exception will be
    * thrown (for both Standard and Premium disks):
-   *   ServiceException: InvalidParameter: The value '1024' of parameter 'dataDisk.diskSizeGB' is
-   *   out of range. Value '1024' must be between '1' and '1023' inclusive.
+   * ServiceException: InvalidParameter: The value '4096' of parameter 'dataDisk.diskSizeGB' is
+   * out of range. Value '4096' must be between '1' and '4095' inclusive.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
    */
   void checkStorage(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
+    final String invalidStorageAccountTypeMsg = "Storage Account Type '%s' is not a valid Azure " +
+        "Storage Account Type. Valid types: '%s'";
+    final String unsupportedStorageAccountTypesMsg = "Storage Account Type '%s' is not " +
+        "supported. Supported types: %s.";
+    final String premiumDiskSizeMissingInConfigMsg = "Premium disk size '%s' is not supported. " +
+        "Supported sizes: %s.";
+    final String standardDiskSizeLessThanMinMsg = "Disk size '%s' is invalid. It must be greater " +
+        "than 0.";
+    final String standardDiskSizeGreaterThanMaxMsg = "Disk size '%s' is invalid. It must be less " +
+        "than or equal to %s.";
+    final String noDiskValidationsMsg = "Disk size is not validated for storage type '%s'.";
 
     // first validate the storage account type
     String storageAccountType = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.STORAGE_ACCOUNT_TYPE, localizationContext);
+        AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE,
+        localizationContext);
 
-    // validate that the storage account type (PremiumLRS by default) exists in azure-plugin.conf
-    if (!pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)
-      .contains(storageAccountType)) {
-      LOG.error(String.format(STORAGE_ACCOUNT_TYPES_MSG, storageAccountType,
-        pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)));
-      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.STORAGE_ACCOUNT_TYPE,
-        localizationContext, null, STORAGE_ACCOUNT_TYPES_MSG, storageAccountType,
-        pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
+    // change the deprecated storage account type to current
+    storageAccountType = Configurations.convertStorageAccountTypeString(storageAccountType);
 
-      // don't do any more checks if this check fails
+    // validate that the storage account type (Premium_LRS by default) is a valid AccountType enum
+    if (SkuName.fromString(storageAccountType) == null) {
+      // logging for current storage
+      LOG.error(String.format(invalidStorageAccountTypeMsg, storageAccountType,
+          Arrays.asList(SkuName.values())));
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE,
+          localizationContext, null, invalidStorageAccountTypeMsg, storageAccountType,
+          Arrays.asList(SkuName.values()));
+
+      // short-circuit return
       return;
     }
 
-    // validate that the storage account type (PremiumLRS by default) is a valid AccountType enum
-    try {
-      AccountType.valueOf(storageAccountType);
-    } catch (IllegalArgumentException e) {
-      LOG.error(String.format(INVALID_STORAGE_ACCOUNT_TYPE_MSG, storageAccountType,
-        Arrays.asList(AccountType.values())));
-      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.STORAGE_ACCOUNT_TYPE,
-        localizationContext, null, INVALID_STORAGE_ACCOUNT_TYPE_MSG, storageAccountType,
-        Arrays.asList(AccountType.values()));
+    // validate that the storage account type (Premium_LRS by default) exists in azure-plugin.conf
+    if (!AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+        .getStringList(Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)
+        .contains(storageAccountType)) {
+      LOG.error(String.format(unsupportedStorageAccountTypesMsg, storageAccountType,
+          AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+              .getStringList(Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)));
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE,
+          localizationContext, null, unsupportedStorageAccountTypesMsg, storageAccountType,
+          AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+              .getStringList(Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES));
 
-      // don't do any more checks if this check fails
+      // short-circuit return
       return;
     }
 
     // given the storage account type validate the data disk size
     String diskSize = directorConfig.getConfigurationValue(
-      AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE, localizationContext);
+        AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE, localizationContext);
 
-    if (storageAccountType.equals(AccountType.PremiumLRS.toString())) {
+    if (storageAccountType.equals(SkuName.PREMIUM_LRS.toString())) {
       // No min / max validations are done to accommodate future increases in Azure Premium disk
       // sizes. All someone needs to do is include the disk size they want in azure-plugin.conf and
       // they will pass validations. If the values used falls outside Azure limitations then the
       // VM(s) will not be provisioned and a ServiceException and message will be in Director logs.
 
       // validate that the disk size exists in azure-plugin.conf
-      if (!pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)
-        .contains(diskSize)) {
-        LOG.error(String.format(PREMIUM_DISK_SIZE_MISSING_IN_CONFIG_MSG, diskSize,
-          pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)));
+      if (!AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+          .getStringList(Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)
+          .contains(diskSize)) {
+        LOG.error(String.format(premiumDiskSizeMissingInConfigMsg, diskSize,
+            AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+                .getStringList(Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
-          localizationContext, null, PREMIUM_DISK_SIZE_MISSING_IN_CONFIG_MSG, diskSize,
-          pluginConfigInstanceSection.getStringList(AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES));
+            localizationContext, null, premiumDiskSizeMissingInConfigMsg, diskSize,
+            AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+                .getStringList(Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES));
       }
-    } else if (storageAccountType.equals(AccountType.StandardLRS.toString())) {
-      // The min is 1GB, the max is currently 1023 configurable by changing azure-plugin.conf. If
+    } else if (storageAccountType.equals(SkuName.STANDARD_LRS.toString())) {
+      // The min is 1GB, the max is currently 4095 configurable by changing azure-plugin.conf. If
       // the value used falls outside Azure limitations then the VM(s) will not be provisioned and a
       // ServiceException and message will be in Director logs.
 
       // validate that the disk size is between 1 and the max value inclusive
       int diskSizeGB = Integer.parseInt(diskSize);
       if (diskSizeGB < 1) {
-        LOG.error(String.format(STANDARD_DISK_SIZE_LESS_THAN_MIN_MSG, diskSize));
+        LOG.error(String.format(standardDiskSizeLessThanMinMsg, diskSize));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
-          localizationContext, null, STANDARD_DISK_SIZE_LESS_THAN_MIN_MSG, diskSize);
+            localizationContext, null, standardDiskSizeLessThanMinMsg, diskSize);
       } else if (diskSizeGB > Integer.parseInt(
-        pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE))) {
-        LOG.error(String.format(STANDARD_DISK_SIZE_GREATER_THAN_MAX_MSG, diskSize,
-          pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE)));
+          AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+              .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE))) {
+        LOG.error(String.format(standardDiskSizeGreaterThanMaxMsg, diskSize,
+            AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+                .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE)));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
-          localizationContext, null, STANDARD_DISK_SIZE_GREATER_THAN_MAX_MSG, diskSize,
-          pluginConfigInstanceSection.getString(AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE));
+            localizationContext, null, standardDiskSizeGreaterThanMaxMsg, diskSize,
+            AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+                .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE));
       }
     } else {
       // if it's not part of the default list don't do any size validations
-      LOG.info(String.format(NO_DISK_VALIDATIONS_MSG, storageAccountType));
+      LOG.info(String.format(noDiskValidationsMsg, storageAccountType));
     }
   }
 
   /**
-   * Check that username is not one of the Azure disallowed usernames.
+   * Checks that username is not one of the Azure disallowed user names.
    *
-   * @param directorConfig
-   * @param accumulator
-   * @param localizationContext
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
    */
   void checkSshUsername(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-    LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
+    final String disallowedUsernamesMsg = "Username '%s' is not allowed. Disallowed usernames: " +
+        "'%s'";
 
-    String sshUsername = directorConfig.getConfigurationValue(SSH_USERNAME, localizationContext);
-    List<String> disallowedUsernames =
-      pluginConfigInstanceSection.getStringList(AZURE_CONFIG_DISALLOWED_USERNAMES);
+    String sshUsername = directorConfig.getConfigurationValue(
+        ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME,
+        localizationContext);
+
+    List<String> disallowedUsernames = AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+        .getStringList(Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES);
 
     if (disallowedUsernames.contains(sshUsername)) {
-      LOG.error(String.format(DISALLOWED_USERNAMES_DETAILED_MSG, sshUsername,
-        disallowedUsernames));
-
-      addError(accumulator, SSH_USERNAME, localizationContext, null, DISALLOWED_USERNAMES_MSG,
-        sshUsername);
+      LOG.error(String.format(disallowedUsernamesMsg, sshUsername, disallowedUsernames));
+      addError(accumulator,
+          ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME,
+          localizationContext, null, disallowedUsernamesMsg, sshUsername, disallowedUsernames);
     }
+  }
+
+  /**
+   * Checks that the Compute Resource Group exists in Azure. This Resource Group defines where
+   * VMs and their dependent resources will be provisioned into, and where to look for Availability
+   * Sets.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   * @param azure the entry point for accessing resource management APIs in Azure
+   */
+  void checkComputeResourceGroup(Configured directorConfig,
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
+      Azure azure) {
+    final String computeResourceGroupMsg = "Compute Resource Group '%s' does not exist. Create " +
+        "the Resource Group or use an existing one.";
+
+    String computeRgName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
+        localizationContext);
+
+    if (azure.resourceGroups().getByName(computeRgName) == null) {
+      LOG.error(String.format(computeResourceGroupMsg, computeRgName));
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
+          localizationContext, null, computeResourceGroupMsg, computeRgName);
+    }
+  }
+
+  /**
+   * Does these checks in sequence, short circuiting on any failures:
+   * 1. The Virtual Network Resource Group exists in Azure.
+   * 2. The Virtual Network exists within the Virtual Network Resource Group and is in the
+   * environment's region
+   * 3. The Subnet exists within the Virtual Network.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   * @param azure the entry point for accessing resource management APIs in Azure
+   */
+  void checkNetwork(Configured directorConfig,
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
+      Azure azure) {
+    final String virtualNetworkResourceGroupMsg = "Virtual Network Resource Group '%s' does not " +
+        "exist. Create the Resource Group or use an existing one.";
+    final String virtualNetworkMsg = "Virtual Network '%s' does not exist within the Resource " +
+        "Group '%s'. Create the Virtual Network or use an existing one.";
+    final String virtualNetworkNotInRegionMsg = "Virtual Network '%s' is not in region '%s'. Use " +
+        "a virtual network from that region.";
+    final String subnetMsg = "Subnet '%s' does not exist under the Virtual Network '%s'. Create " +
+        "the subnet or use an existing one.";
+
+    String vnrgName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP,
+        localizationContext);
+    String vnName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK, localizationContext);
+    String subnetName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME,
+        localizationContext);
+
+    if (azure.resourceGroups().getByName(vnrgName) == null) {
+      LOG.error(String.format(virtualNetworkResourceGroupMsg, vnrgName));
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP,
+          localizationContext, null, virtualNetworkResourceGroupMsg, vnrgName);
+
+      // short circuit return
+      return;
+    }
+
+    // check that the RG contains the VN
+    Network vn = azure.networks().getByResourceGroup(vnrgName, vnName);
+    if (vn == null) {
+      LOG.error(String.format(virtualNetworkMsg, vnName, vnrgName));
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK,
+          localizationContext, null, virtualNetworkMsg, vnName, vnrgName);
+
+      // short-circuit return
+      return;
+    }
+
+    // check that the VN is in the environment's region
+    if (!vn.regionName().equalsIgnoreCase(region)) {
+      LOG.error(String.format(virtualNetworkNotInRegionMsg, vnName, region));
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK,
+          localizationContext, null, virtualNetworkMsg, vnName, region);
+
+      // short-circuit return
+      return;
+    }
+
+    // check that the VN contains the subnet
+    if (!vn.subnets().containsKey(subnetName)) {
+      LOG.error(String.format(subnetMsg, subnetName, vnName));
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME,
+          localizationContext, null, subnetMsg, subnetName, vnName);
+    }
+  }
+
+  /**
+   * Checks that the Resource Group exists in Azure. This Resource Group defines where to look for
+   * the Network Security Group.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   * @param azure the entry point for accessing resource management APIs in Azure
+   */
+  void checkNetworkSecurityGroupResourceGroup(Configured directorConfig,
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
+      Azure azure) {
+    final String networkSecurityGroupResourceGroupMsg = "Network Security Group Resource " +
+        "Group '%s' does not exist. Create the Resource Group or use an existing one.";
+
+    String nsgrgName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP,
+        localizationContext);
+
+    if (azure.resourceGroups().getByName(nsgrgName) == null) {
+      LOG.error(String.format(networkSecurityGroupResourceGroupMsg, nsgrgName));
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP,
+          localizationContext, null, networkSecurityGroupResourceGroupMsg, nsgrgName);
+    }
+  }
+
+  /**
+   * Checks that the Network Security Group exists within the Resource Group.
+   *  @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   * @param azure the entry point for accessing resource management APIs in Azure   */
+  void checkNetworkSecurityGroup(Configured directorConfig,
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
+      Azure azure) {
+    final String networkSecurityGroupNotInRGMsg = "Network Security Group '%s' does not exist " +
+        "within the Resource Group '%s'. Create the Network Security Group or use an existing one.";
+    final String networkSecurityGroupNotInRegionMsg = "Network Security Group '%s' is not in " +
+        "region '%s'. Use a network security group set from that region.";
+
+    String nsgrgName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP,
+        localizationContext);
+    String nsgName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
+        localizationContext);
+
+    // Check that the NSG is in the RG
+    if (azure.networkSecurityGroups().getByResourceGroup(nsgrgName, nsgName) == null) {
+      LOG.error(String.format(networkSecurityGroupNotInRGMsg, nsgName, nsgrgName));
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
+          localizationContext, null, networkSecurityGroupNotInRGMsg, nsgName, nsgrgName);
+
+      // short-circuit return
+      return;
+    }
+
+    // Check that the NSG is in the region
+    if (!azure.networkSecurityGroups().getByResourceGroup(nsgrgName, nsgName).regionName()
+        .equals(region)) {
+      LOG.error(String.format(networkSecurityGroupNotInRegionMsg, nsgName, region));
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
+          localizationContext, null, networkSecurityGroupNotInRegionMsg, nsgName, region);
+    }
+  }
+
+  /**
+   * Checks that the Availability Set exists in Azure and that the Availability Set supports the
+   * version of VM being created. Different versions of the same VM size (e.g. v2 vs. non-v2) and
+   * storage type (e.g. managed-disks vs. non-managed-disks) cannot coexist in the same Availability
+   * Set.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   * @param azure the entry point for accessing resource management APIs in Azure
+   */
+  void checkAvailabilitySetAndManagedDisks(Configured directorConfig,
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
+      Azure azure) {
+    final String availabilitySetNotInRGMsg = "Availability Set '%s' does not exist in Compute " +
+        "Resource Group '%s'. Create the Availability Set or use an existing one.";
+    final String availabilitySetNotInRegionMsg = "Availability Set '%s' is not in region '%s'. " +
+        "Use an availability set from that region.";
+    final String availabilitySetVmMismatchMsg = "Virtual Machine size '%s' is not allowed in " +
+        "Availability Set '%s'. Different versions of the same VM size (e.g. v2 vs. non-v2) " +
+        "cannot coexist in the same Availability Set. An Availability Set should be dedicated to " +
+        "a specific cluster and node type. Use a different Availability Set or use a VM size " +
+        "from this list: '%s'";
+    final String availabilitySetStorageAccountsMismatchMsg = "Managed Availability Set '%s' does " +
+        "not allow VMs with unmanaged disks. Use an unmanaged Availability Set or use Managed " +
+        "Disks for the VM.";
+    final String availabilitySetManagedDisksMismatchMsg = "Unmanaged Availability Set '%s' does " +
+        "not allow VMs with managed disks. Use a managed Availability Set or use Unmanaged Disks " +
+        "(Storage Accounts) for the VM.";
+
+    String computeRgName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
+        localizationContext);
+    String asName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET, localizationContext);
+
+    // If no AS was specified then short-circuit
+    if (asName == null || asName.trim().isEmpty()) {
+      // short-circuit return
+      LOG.debug("No Availability Set specified, skipping AS checks.");
+      return;
+    }
+
+    // Check that the AS is in the RG
+    AvailabilitySet as = azure.availabilitySets().getByResourceGroup(computeRgName, asName);
+    if (as == null) {
+      LOG.error(String.format(availabilitySetNotInRGMsg, asName, computeRgName));
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+          localizationContext, null, availabilitySetNotInRGMsg, asName, computeRgName);
+
+      // short-circuit return
+      return;
+    }
+
+    // Check that the AS is in the region
+    if (!as.regionName().equals(region)) {
+      LOG.error(String.format(availabilitySetNotInRegionMsg, asName, region));
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+          localizationContext, null, availabilitySetNotInRegionMsg, asName, region);
+    }
+
+    // Check that the AS supports the family of VM being created
+    String vmSize = directorConfig
+        .getConfigurationValue(
+            AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, localizationContext)
+        .toUpperCase();
+    // Normalize the Azure-supported list of VM Sizes (pulled from Azure backend)
+    Set<String> azureSupportedVmSizes = new HashSet<>();
+    for (VirtualMachineSize supportedVMSize : as.listVirtualMachineSizes()) {
+      azureSupportedVmSizes.add(supportedVMSize.name().toUpperCase());
+    }
+
+    if (!azureSupportedVmSizes.contains(vmSize)) {
+      // Normalize the Cloudera-supported list, used in the error message
+      Set<String> clouderaSupportedVMSizes = new HashSet<>();
+      for (String vm : AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+          .getStringList(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED)) {
+        clouderaSupportedVMSizes.add(vm.toUpperCase());
+      }
+      // trim the list
+      clouderaSupportedVMSizes.retainAll(azureSupportedVmSizes);
+
+      LOG.error(String.format(availabilitySetVmMismatchMsg, vmSize, asName,
+          clouderaSupportedVMSizes));
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+          localizationContext, null, availabilitySetVmMismatchMsg, vmSize, asName,
+          clouderaSupportedVMSizes);
+    }
+
+    // Check that the AS and MD/SA choices are compatible
+    AvailabilitySetSkuTypes selectedDiskType = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS, localizationContext)
+        .equals("Yes") ? AvailabilitySetSkuTypes.MANAGED : AvailabilitySetSkuTypes.UNMANAGED;
+    AvailabilitySetSkuTypes asDiskType = as.sku();
+
+    if (!selectedDiskType.equals(asDiskType)) {
+      // Propagate the right error
+      if (selectedDiskType == AvailabilitySetSkuTypes.MANAGED) {
+        // Managed Disks selected, but AS supports Storage Accounts
+        LOG.error(String.format(availabilitySetManagedDisksMismatchMsg, asName));
+        addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+            localizationContext, null, availabilitySetManagedDisksMismatchMsg, asName);
+        addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
+            localizationContext, null, availabilitySetManagedDisksMismatchMsg, asName);
+      } else {
+        // Storage Accounts selected, but AS supports Managed Disks
+        LOG.error(String.format(availabilitySetStorageAccountsMismatchMsg, asName));
+        addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+            localizationContext, null, availabilitySetStorageAccountsMismatchMsg, asName);
+        addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
+            localizationContext, null, availabilitySetStorageAccountsMismatchMsg, asName);
+      }
+    }
+  }
+
+  /**
+   * Checks that VM image string is either:
+   * a. a URI one line representation of an image in this format:
+   *    /publisher/<publisher>/offer/<offer>/sku/<sku>/version/<version>
+   * b. otherwise, an image specified in the configurable images file
+   *
+   * If it's a valid image definition then check that the image exists in the Azure Marketplace.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   * @param azure the entry point for accessing resource management APIs in Azure
+   */
+  void checkVmImage(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
+      LocalizationContext localizationContext, Azure azure) {
+    final String imageMissingInAzureMsg = "Image with region; %s; publisher: %s; offer: %s; " +
+        "sku: %s; and version: %s; does not exist in Azure.";
+    final String imageInvalidMsg = "Image with region: %s; publisher: %s; offer: %s; sku: %s; " +
+        "and version: %s; is not a valid image.";
+    final boolean useCustomImage = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
+        localizationContext).equals("Yes");
+
+    // skip VM image check if user is using custom image
+    if (useCustomImage) {
+      return;
+    }
+
+    String imageString = directorConfig.getConfigurationValue(
+        ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
+        localizationContext);
+
+    ImageReference image;
+    String publisher;
+    String offer;
+    String sku;
+    String version;
+    try {
+      image = Configurations.parseImageFromConfig(directorConfig, localizationContext);
+
+      publisher = image.publisher();
+      offer = image.offer();
+      sku = image.sku();
+      version = image.version();
+
+    } catch (ValidationException e) {
+      LOG.error(e.getMessage());
+      addError(accumulator,
+          ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
+          localizationContext, null, e.getMessage());
+
+      // short circuit return
+      return;
+    }
+
+    // FIXME preview image validation (the offer ends with "-preview") - CURRENTLY NO VALIDATION IS DONE
+    // There's a bug in preview image validation: https://github.com/Azure/azure-sdk-for-java/issues/1890
+    if (Configurations.isPreviewImage(image)) {
+      LOG.info("Image '{}' is a preview image. Publisher: {}; offer: {}; sku: {}; version: {}.",
+          imageString, publisher, offer, sku  , version);
+
+      // short circuit return
+      return;
+    }
+
+    // regular image validation
+    try {
+      if (azure.virtualMachineImages().getImage(region, publisher, offer, sku, version) == null) {
+        LOG.error(String.format(imageMissingInAzureMsg, region, publisher, offer, sku, version));
+        addError(accumulator,
+            ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
+            localizationContext, null, imageMissingInAzureMsg, region, publisher, offer, sku,
+            version);
+      }
+    } catch (CloudException e) {
+      LOG.error(String.format(imageInvalidMsg, region, publisher, offer, sku, version));
+      addError(accumulator,
+          ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
+          localizationContext, null, imageInvalidMsg, region, publisher, offer, sku, version);
+    }
+  }
+
+  /**
+   * Checks to see if Managed Disk option is on when user chooses to use custom image and validate
+   * the image itself (existence & location).
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   */
+  void checkUseCustomImage(Configured directorConfig,
+      PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext,
+      Azure azure) {
+    final String customImageOnlySupportsMdErrorMsg = "Custom image option is only supported when " +
+        "using Managed Disks.";
+    final String customImageGetByIdErrorMsg = "Failed to find custom image %s due to %s. The " +
+        "image may not exist or the image resource ID is incorrect.";
+    final String customImageDoesNotExistErrorMsg = "Custom image %s does not exist.";
+    final String customImageInDifferentRegionErrorMsg = "Custom image %s is in a different " +
+        "region (%s) from the environment (%s). The custom image must be in the same region " +
+        "as the environment.";
+    final boolean useManagedDisk = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
+        localizationContext).equals("Yes");
+    final boolean useCustomImage = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
+        localizationContext).equals("Yes");
+    final String imageId = directorConfig.getConfigurationValue(
+        ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
+        localizationContext);
+
+    if (!useCustomImage) {
+      return;
+    }
+
+    if (!useManagedDisk) {
+      LOG.error(String.format(customImageOnlySupportsMdErrorMsg));
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
+          localizationContext, null, customImageOnlySupportsMdErrorMsg);
+      return;
+    }
+
+    // make sure image exists and is in the correct region
+    VirtualMachineCustomImage image;
+    try {
+      // getById throws exception if ID is malformed
+      image = azure.virtualMachineCustomImages().getById(imageId);
+    } catch (Exception e) {
+      // AZURE_SDK FIXME Azure SDK throws NPE if the image does not exist
+      LOG.error(String.format(customImageGetByIdErrorMsg, imageId, e.getMessage()), e);
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
+          localizationContext, null, customImageGetByIdErrorMsg, imageId, e.getMessage());
+      return;
+    }
+    if (image == null) {
+      LOG.error(String.format(customImageDoesNotExistErrorMsg, imageId));
+      addError(accumulator,
+          ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
+          localizationContext, null, customImageDoesNotExistErrorMsg, imageId);
+      return;
+    }
+    if (!image.region().toString().equals(region)) {
+      LOG.error(String.format(customImageInDifferentRegionErrorMsg, imageId, image.region(),
+          region));
+      addError(accumulator,
+          ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
+          localizationContext, null, customImageInDifferentRegionErrorMsg, imageId,
+          image.region(), region);
+      return;
+    }
+
+    // check custom image purchase plan config
+    try {
+      Configurations.parseCustomImagePurchasePlanFromConfig(directorConfig, localizationContext);
+    } catch (ValidationException e) {
+      LOG.error(e.getMessage());
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_IMAGE_PLAN,
+          localizationContext, null, e.getMessage());
+    }
+  }
+
+  /**
+   * Checks to see if the configured AAD group exists (in the same tenant as the service principal
+   * used by the plugin. Also checks to see if the service principal can read AAD for group and
+   * group member info.
+   *
+   * NOTE: This validator does not check for write privilege for adding member to AAD group.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   */
+  void checkImplicitMsiGroupName(Configured directorConfig,
+      PluginExceptionConditionAccumulator accumulator,
+      LocalizationContext localizationContext) {
+    final String aadGroupDoesNotExistMsg = "Failed to find AAD group '%s' in Tenant '%s'. Please " +
+        "confirm the service principal has read/write access to the AAD tenant, the name of the " +
+        "AAD group or create the group.";
+    final boolean useImplicitMsi = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI,
+        localizationContext).equals("Yes");
+
+    if (!useImplicitMsi) {
+      LOG.debug("Not using implicit MSI, skip AAD group name validation.");
+      return;
+    }
+
+    final String aadGroupName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME,
+        localizationContext);
+
+    if (aadGroupName == null || aadGroupName.isEmpty()) {
+      LOG.debug("Skip implicit MSI AAD group name validation because it is not configured.");
+      return;
+    }
+
+    GraphRbacManager graphRbacManager = credentials.getGraphRbacManager();
+    ActiveDirectoryGroup aadGroup = graphRbacManager.groups().getByName(aadGroupName);
+    if (aadGroup == null) {
+      LOG.error(String.format(aadGroupDoesNotExistMsg, aadGroupName, graphRbacManager.tenantId()));
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME,
+          localizationContext, null, aadGroupDoesNotExistMsg, aadGroupName,
+          graphRbacManager.tenantId());
+      return;
+    }
+    LOG.info("AAD group '{}' exists in Tenant {}.", aadGroupName, graphRbacManager.tenantId());
   }
 }

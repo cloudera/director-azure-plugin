@@ -16,185 +16,130 @@
 
 package com.cloudera.director.azure.compute.credentials;
 
-import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.AAD_URL;
-import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.ARM_URL;
-import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.CLIENT_ID;
-import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.CLIENT_SECRET;
-import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.MGMT_URL;
-import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.SUBSCRIPTION_ID;
-import static com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration.TENANT_ID;
-
-import com.cloudera.director.azure.compute.provider.AzureComputeProviderHelper;
+import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.InvalidCredentialsException;
-import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
-import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
-import com.microsoft.azure.utility.AuthHelper;
-import com.microsoft.azure.utility.ResourceContext;
-import com.microsoft.windowsazure.Configuration;
-import com.microsoft.windowsazure.credentials.TokenCloudCredentials;
-import com.microsoft.windowsazure.management.configuration.ManagementConfiguration;
+import com.microsoft.azure.AzureEnvironment;
+import com.microsoft.azure.credentials.ApplicationTokenCredentials;
+import com.microsoft.azure.management.Azure;
+import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 
-import java.io.IOException;
-import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.concurrent.ExecutionException;
-
-import javax.naming.ServiceUnavailableException;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Credentials for authenticating with Azure backend. Assuming service principle
- * style authentication.
- * <p/>
- * To authenticate with Azure backend, we need to have:
- * - Management URL
- * - Azure AD URL
- * - Tenant ID
+ * Credentials for authenticating with Azure backend. Assuming service principal style
+ * authentication.
  */
-@SuppressWarnings("PMD.TooManyStaticImports")
 public class AzureCredentials {
+
   private static final Logger LOG = LoggerFactory.getLogger(AzureCredentials.class);
 
+  private final ApplicationTokenCredentials credentials;
+
   private final String subId;
-  private final String mgmtUrl;
-  private final String armUrl;
-  private final String aadUrl;
-  private final String tenant;
-  private final String clientId;
-  private final String clientKey;
 
+  /**
+   * Builds credentials in a backwards compatible way by:
+   * 1. If the "MGMT_URL" field (plugin v1) is set then map it to the corresponding Azure Cloud and
+   * build the credentials. If the field doesn't map then log an error and exit.
+   * 2. Otherwise Authenticate with the "azureCloudEnvironment" field (plugin v2) normally.
+   *
+   * @param config config with Azure Credential fields
+   * @param local localization context to extract config
+   */
   public AzureCredentials(Configured config, LocalizationContext local) {
-    this.subId = config.getConfigurationValue(SUBSCRIPTION_ID, local);
-    this.mgmtUrl = config.getConfigurationValue(MGMT_URL, local);
-    this.armUrl = config.getConfigurationValue(ARM_URL, local);
-    this.aadUrl = config.getConfigurationValue(AAD_URL, local);
-    this.tenant = config.getConfigurationValue(TENANT_ID, local);
-    this.clientId = config.getConfigurationValue(CLIENT_ID, local);
-    this.clientKey = config.getConfigurationValue(CLIENT_SECRET, local);
-  }
+    LOG.info("Creating ApplicationTokenCredentials");
 
-  public AzureCredentials(String subId, String mgmtUrl, String armUrl, String aadUrl,
-    String tenant, String clientId, String clientKey) {
-    this.subId = subId;
-    this.mgmtUrl = mgmtUrl;
-    this.armUrl = armUrl;
-    this.aadUrl = aadUrl;
-    this.tenant = tenant;
-    this.clientId = clientId;
-    this.clientKey = clientKey;
+    this.subId = config.getConfigurationValue(AzureCredentialsConfiguration.SUBSCRIPTION_ID, local);
+    AzureEnvironment azureEnvironment;
+
+    // if MGMT_URL is set use it to find the AzureEnvironment
+    String managementUrl =
+        config.getConfigurationValue(AzureCredentialsConfiguration.MGMT_URL, local);
+    if (managementUrl != null && !managementUrl.isEmpty()) {
+      LOG.warn("DEPRECATION WARNING: using Management URL is deprecated. It's recommended to " +
+              "REMOVE the key '{}' from the template (otherwise Director will attempt to use the " +
+              "deprecated method) and specify an Azure Cloud Environment with the key '{}' " +
+              "instead.",
+          AzureCredentialsConfiguration.MGMT_URL.unwrap().getConfigKey(),
+          AzureCredentialsConfiguration.AZURE_CLOUD_ENVIRONMENT.unwrap().getConfigKey());
+
+      azureEnvironment = AzureCloudEnvironment
+          .getAzureEnvironmentFromDeprecatedConfig(managementUrl);
+    } else {
+      azureEnvironment = AzureCloudEnvironment.get(config
+          .getConfigurationValue(AzureCredentialsConfiguration.AZURE_CLOUD_ENVIRONMENT, local));
+    }
+
+    if (azureEnvironment == null) {
+      throw new InvalidCredentialsException(String.format("Azure Cloud Environment %s is not a " +
+              "valid environment. Valid environments: %s",
+          config.getConfigurationValue(
+              AzureCredentialsConfiguration.AZURE_CLOUD_ENVIRONMENT, local),
+          AzureCloudEnvironment.keysToString()));
+    }
+
+    this.credentials = new ApplicationTokenCredentials(
+        config.getConfigurationValue(AzureCredentialsConfiguration.CLIENT_ID, local),
+        config.getConfigurationValue(AzureCredentialsConfiguration.TENANT_ID, local),
+        config.getConfigurationValue(AzureCredentialsConfiguration.CLIENT_SECRET, local),
+        azureEnvironment);
   }
 
   /**
-   * Creates CloudCredentials.
+   * Returns an Azure credentials object for accessing resource management APIs in Azure.
    *
-   * NOTE: AccessToken will expire. When it does, user must request for a new one.
+   * This returned Azure object has not been authenticated and does not authenticate with Azure
+   * until it is used for a call that requires authentication (i.e. until calling a backend
+   * service). This means that this method can't be used to test for valid credentials.
    *
-   * @return Token based cloud credentials
-   * @throws ServiceUnavailableException Something broke when making a call to Azure Active
-   *                                     Directory.
-   * @throws MalformedURLException       The url provided to AAD was not properly formed.
-   * @throws ExecutionException          Something went wrong.
-   * @throws InterruptedException        The request to AAD has been interrupted.
+   * xxx/all - It is unknown how long this object stays authenticated for, if it gets automatically
+   * refreshed, etc
+   *
+   * @return base Azure object used to access resource management APIs in Azure
    */
-  private TokenCloudCredentials createCredentials()
-    throws ServiceUnavailableException, MalformedURLException, ExecutionException,
-    InterruptedException {
-    return new TokenCloudCredentials(null, subId,
-      AuthHelper.getAccessTokenFromServicePrincipalCredentials(
-        mgmtUrl, aadUrl, tenant, clientId, clientKey).getAccessToken());
+  public Azure authenticate() {
+    LOG.debug("Getting Azure API object (with deferred authentication).");
+    return Azure.configure()
+        .withConnectionTimeout(AzurePluginConfigHelper.getAzureSdkConnectionTimeout(),
+            TimeUnit.SECONDS)
+        .withReadTimeout(AzurePluginConfigHelper.getAzureSdkReadTimeout(), TimeUnit.SECONDS)
+        .withMaxIdleConnections(AzurePluginConfigHelper.getAzureSdkMaxIdleConn())
+        .authenticate(credentials).withSubscription(subId);
   }
 
   /**
-   * Creates configuration builds the management configuration needed for creating the clients.
-   * <p/>
-   * There's some trickiness around URIs (see code for more details):
-   *   - under the hood the SDK uses the management URI correctly only for getting an access token
-   *     (see getAccessTokenFromServicePrincipalCredentials())
-   *   - even though it's passed in when we create the Configuration object, the URI is not being
-   *     used to set the "management.uri" field
-   *   - within the Configuration and underlying Client SDK classes "management.uri" is used where
-   *     the Azure Resource Manager (ARM) URI should be; to fix this, we explicitly set
-   *     "management.uri" to ARM URL so that references of "management.uri" get the correct URL
-   * <p/>
-   * The config contains the baseURI which is the base of the ARM REST service,
-   * the subscription id as the context for the ResourceManagementService and
-   * the AAD token required for the HTTP Authorization header.
-   * <p/>
-   * A new configuration must be created once AccessToken expires.
+   * Validates the credentials by making an Azure backend call that forces the Azure object to
+   * authenticate itself immediately.
    *
-   * @return the generated configuration
-   * @throws UnrecoverableProviderException hit problems with AAD service
-   * @throws TransientProviderException     call to AAD backend interrupted
+   * @throws RuntimeException if there are any problems authenticating
    */
-  public Configuration createConfiguration() throws UnrecoverableProviderException,
-    TransientProviderException {
+  public void validate() throws RuntimeException {
+    LOG.info("Validating credentials by authenticating with Azure.");
+
     try {
-      Configuration configuration = ManagementConfiguration.configure(
-        null, // AZURE_SDK: This is always set to null in all the examples in Azure SDK
-        // AZURE_SDK: this does not set the "management.uri" field, it sets a field that is never
-        // referenced - essentially this can be anything
-        new URI(armUrl),
-        subId,
-        createCredentials().getToken());
-      // AZURE_SDK: The "management.uri" field is used as if it was actually ARM URI
-      configuration.setProperty("management.uri", new URI(armUrl));
-      return configuration;
-    } catch (URISyntaxException | MalformedURLException e) {
-      LOG.error("Malformed Azure Resource Manager URL (stored in \"management.uri\"): {}.",
-        armUrl, e);
-      throw new InvalidCredentialsException(e);
-    } catch (ServiceUnavailableException | IOException e) {
-      LOG.error("Encountered error contacting Azure Active Directory service.", e);
-      throw new UnrecoverableProviderException(e);
-    } catch (ExecutionException e) {
-      LOG.error("Invalid credentials.", e);
-      throw new InvalidCredentialsException(e);
-    } catch (InterruptedException e) {
-      LOG.error("The request to Azure Active Director has been interrupted.", e);
-      throw new TransientProviderException(e);
+      Azure.authenticate(credentials).withDefaultSubscription();
+    } catch (Exception e) {
+      LOG.error("Failed to authenticate with Azure: " + e.getMessage());
+      throw new RuntimeException(e);
     }
   }
 
-  public String getSubscriptionId() {
-    return subId;
-  }
-
-  public String getManagemetUrl() {
-    return mgmtUrl;
-  }
-
-  public String getAadUrl() {
-    return aadUrl;
-  }
-
   /**
-   * Create an empty Azure resource context with the subscription ID.
+   * Returns an Azure Graph RBAC manager object for AAD management.
    *
-   * @param location      Azure "Region"
-   * @param resourceGroup resource group name
-   * @param publicIpFlag  true if public IP is requested
-   * @return an empty Azure resource context with the subscription ID
+   * @return an Azure Graph RBAC manager object for AAD management
    */
-  public ResourceContext createResourceContext(String location, String resourceGroup, boolean publicIpFlag) {
-    return new ResourceContext(location, resourceGroup, subId, publicIpFlag);
-  }
-
-  /**
-   * @return an AzureComputeProviderHelper object
-   */
-  public AzureComputeProviderHelper getComputeProviderHelper() {
-    // AZURE_SDK Azure SDK requires the following calls to correctly create clients.
-    ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
-    Thread.currentThread().setContextClassLoader(ManagementConfiguration.class.getClassLoader());
-    try {
-      return new AzureComputeProviderHelper(createConfiguration());
-    } finally {
-      Thread.currentThread().setContextClassLoader(contextLoader);
-    }
+  public GraphRbacManager getGraphRbacManager() {
+    LOG.debug("Getting Azure Graph RBAC manager object (with deferred authentication).");
+    return GraphRbacManager
+        .configure()
+        .withConnectionTimeout(AzurePluginConfigHelper.getAzureSdkConnectionTimeout(),
+            TimeUnit.SECONDS)
+        .authenticate(credentials);
   }
 }

@@ -25,76 +25,65 @@ import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilde
  */
 public enum AzureCredentialsConfiguration implements ConfigurationPropertyToken {
 
-  // managementEndpointUrl
-  MGMT_URL(new SimpleConfigurationPropertyBuilder()
-    .configKey("mgmtUrl")
-    .name("Management URL")
-    .defaultDescription("Management URL.<br />")
-    .defaultErrorMessage("Management URL is mandatory")
-    .defaultValue("https://management.core.windows.net/")
-    .required(true)
-    .widget(ConfigurationProperty.Widget.TEXT)
-    .build()),
-
-  // resourceManagerEndpointUrl
-  ARM_URL(new SimpleConfigurationPropertyBuilder()
-    .configKey("armUrl")
-    .name("Resource Manager URL")
-    .defaultDescription("Azure Resource Management URL.<br />")
-    .defaultErrorMessage("Azure Resource Management URL is mandatory")
-    .defaultValue("https://management.azure.com/")
-    .required(false)
-    .widget(ConfigurationProperty.Widget.TEXT)
-    .build()),
+  AZURE_CLOUD_ENVIRONMENT(new SimpleConfigurationPropertyBuilder()
+      .configKey("azureCloudEnvironment")
+      .name("Azure Cloud Environment")
+      .addValidValues(
+          AzureCloudEnvironment.AZURE,
+          AzureCloudEnvironment.AZURE_US_GOVERNMENT,
+          AzureCloudEnvironment.AZURE_GERMANY)
+      .defaultValue(AzureCloudEnvironment.AZURE)
+      .defaultDescription("The Azure Cloud to use.")
+      .defaultErrorMessage("The Azure Cloud is required.")
+      .required(false)
+      .widget(ConfigurationProperty.Widget.OPENLIST)
+      .build()),
 
   SUBSCRIPTION_ID(new SimpleConfigurationPropertyBuilder()
-    .configKey("subscriptionId")
-    .name("Subscription ID")
-    .defaultDescription("Azure Active Directory Subscription ID.<br />" + Constants.CREDENTIALS_INFO_LINK)
-    .defaultErrorMessage("Subscription ID is mandatory")
-    .required(true)
-    .widget(ConfigurationProperty.Widget.TEXT)
-    .build()),
-
-  // AAD URL should be fixed unless MSFT changes it
-  AAD_URL(new SimpleConfigurationPropertyBuilder()
-    .configKey("aadUrl")
-    .name("AAD URL")
-    .defaultDescription("Azure Active Directory URL.<br />")
-    .defaultErrorMessage("AAD URL is mandatory")
-    .defaultValue("https://login.windows.net/")
-    .required(true)
-    .widget(ConfigurationProperty.Widget.TEXT)
-    .build()),
+      .configKey("subscriptionId")
+      .name("Subscription ID")
+      .defaultDescription("Azure Active Directory Subscription ID.")
+      .defaultErrorMessage("Subscription ID is required.")
+      .required(true)
+      .widget(ConfigurationProperty.Widget.TEXT)
+      .build()),
 
   TENANT_ID(new SimpleConfigurationPropertyBuilder()
-    .configKey("tenantId")
-    .name("Tenant ID")
-    .defaultDescription("Azure Active Directory Tenant ID.<br />" + Constants.CREDENTIALS_INFO_LINK)
-    .defaultErrorMessage("Tenant ID is mandatory")
-    .required(true)
-    .widget(ConfigurationProperty.Widget.TEXT)
-    .build()),
+      .configKey("tenantId")
+      .name("Tenant ID")
+      .defaultDescription("Azure Active Directory Tenant ID.")
+      .defaultErrorMessage("Tenant ID is required.")
+      .required(true)
+      .widget(ConfigurationProperty.Widget.TEXT)
+      .build()),
 
   CLIENT_ID(new SimpleConfigurationPropertyBuilder()
-    .configKey("clientId")
-    .name("Client ID")
-    .defaultDescription("Azure Active Directory Application Client ID.")
-    .defaultErrorMessage("Client ID is mandatory")
-    .required(true)
-    .widget(ConfigurationProperty.Widget.TEXT)
-    .build()),
+      .configKey("clientId")
+      .name("Client ID")
+      .defaultDescription("Azure Active Directory Application Client ID.")
+      .defaultErrorMessage("Client ID is required.")
+      .required(true)
+      .widget(ConfigurationProperty.Widget.TEXT)
+      .build()),
 
   CLIENT_SECRET(new SimpleConfigurationPropertyBuilder()
-    .configKey("clientSecret")
-    .name("Client Secret")
-    .defaultDescription("Azure Active Directory Application Client Secret.<br />" + Constants
-      .CREDENTIALS_INFO_LINK)
-    .sensitive(true)
-    .required(true)
-    .defaultErrorMessage("Client Secret is mandatory")
-    .widget(ConfigurationProperty.Widget.TEXT)
-    .build());
+      .configKey("clientSecret")
+      .name("Client Secret")
+      .defaultDescription("Azure Active Directory Application Client Secret.")
+      .defaultErrorMessage("Client Secret is required.")
+      .sensitive(true)
+      .required(true)
+      .widget(ConfigurationProperty.Widget.TEXT)
+      .build()),
+
+  MGMT_URL(new SimpleConfigurationPropertyBuilder()
+      .configKey("mgmtUrl")
+      .name("(DEPRECATED) Management URL")
+      .defaultDescription("(DEPRECATED) Management URL; use Azure Cloud Environment instead.")
+      .defaultErrorMessage("Management URL is DEPRECATED; use Azure Cloud Environment instead.")
+      .required(false)
+      .hidden(true)
+      .build());
 
   private final ConfigurationProperty configProperty;
 
@@ -110,5 +99,4 @@ public enum AzureCredentialsConfiguration implements ConfigurationPropertyToken 
   public ConfigurationProperty unwrap() {
     return configProperty;
   }
-
 }

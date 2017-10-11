@@ -31,17 +31,18 @@ import java.util.List;
  */
 public class AzureCredentialsProvider implements CredentialsProvider<AzureCredentials> {
   private static final List<ConfigurationProperty> CONFIGURATION_PROPERTIES =
-    ConfigurationPropertiesUtil.asConfigurationPropertyList(AzureCredentialsConfiguration.values());
+      ConfigurationPropertiesUtil
+          .asConfigurationPropertyList(AzureCredentialsConfiguration.values());
 
   public static final CredentialsProviderMetadata METADATA =
-    new SimpleCredentialsProviderMetadata(CONFIGURATION_PROPERTIES);
+      new SimpleCredentialsProviderMetadata(CONFIGURATION_PROPERTIES);
 
   public CredentialsProviderMetadata getMetadata() {
     return METADATA;
   }
 
   public AzureCredentials createCredentials(Configured configuration,
-    LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
     return new AzureCredentials(configuration, localizationContext);
   }
 }

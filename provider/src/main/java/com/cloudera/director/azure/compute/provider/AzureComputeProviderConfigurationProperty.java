@@ -27,48 +27,46 @@ import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilde
 public enum AzureComputeProviderConfigurationProperty implements ConfigurationPropertyToken {
 
   REGION(new SimpleConfigurationPropertyBuilder()
-    .configKey("region")
-    .name("Region")
-    .defaultValue("westus")
-    .defaultDescription(
-      "Region for deployment.<br />" +
-        "All resources used for deployment must exist in the same region.<br />" +
-        "<a target='_blank' href='https://azure.microsoft.com/en-us/regions/'>More Information</a>")
-    .widget(ConfigurationProperty.Widget.OPENLIST)
-    .addValidValues(
-        // Americas
-        "eastus",
-        "eastus2",
-        "centralus",
-        "northcentralus",
-        "southcentralus",
-        "westcentralus",
-        "westus",
-        "westus2",
-        "canadaeast",
-        "canadacentral",
-        "brazilsouth",
-        // Europe
-        "northeurope",
-        "westeurope",
-        "ukwest",
-        "uksouth",
-        // Asia Pacific
-        "southeastasia",
-        "eastasia",
-        "australiaeast",
-        "australiasoutheast",
-        "centralindia",
-        "southindia",
-        "japaneast",
-        "japanwest",
-        // US Gov
-        "usgovvirginia",
-        //"usgoviowa", // this region does not support premium storage yet
-        // Germany
-        "germanycentral",
-        "germanynortheast")
-    .build());
+      .configKey("region")
+      .name("Region")
+      .defaultValue("westus")
+      .defaultDescription("Region for deployment.<br />All resources used for deployment must " +
+          "exist in the same region.<br /><a target='_blank' href='https://azure.microsoft.com/" +
+          "en-us/regions/'>More Information</a>")
+      .widget(ConfigurationProperty.Widget.OPENLIST)
+      .addValidValues(
+          // Americas
+          "eastus",
+          "eastus2",
+          "centralus",
+          "northcentralus",
+          "southcentralus",
+          "westcentralus",
+          "westus",
+          "westus2",
+          "canadaeast",
+          "canadacentral",
+          "brazilsouth",
+          // Europe
+          "northeurope",
+          "westeurope",
+          "ukwest",
+          "uksouth",
+          // Asia Pacific
+          "southeastasia",
+          "eastasia",
+          "australiaeast",
+          "australiasoutheast",
+          "centralindia",
+          "southindia",
+          "japaneast",
+          "japanwest",
+          // US Gov
+          "usgovvirginia",
+          // Germany
+          "germanycentral",
+          "germanynortheast")
+      .build());
 
   /**
    * The configuration property.

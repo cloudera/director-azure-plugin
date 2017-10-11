@@ -1,6 +1,0 @@
-{
-  "fileUris": [
-    "https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/cloudera-on-centos/scripts/prepare-masternode-disks.sh"
-  ],
-  "commandToExecute": "sh prepare-masternode-disks.sh"
-}

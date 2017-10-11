@@ -34,19 +34,17 @@ public class AzureComputeInstanceTemplate extends ComputeInstanceTemplate {
    * The list of configuration properties (including inherited properties).
    */
   private static final List<ConfigurationProperty> CONFIGURATION_PROPERTIES =
-    ConfigurationPropertiesUtil.merge(
-      ComputeInstanceTemplate.getConfigurationProperties(),
-      ConfigurationPropertiesUtil.asConfigurationPropertyList(
-        AzureComputeInstanceTemplateConfigurationProperty.values())
-    );
+      ConfigurationPropertiesUtil.merge(
+          ComputeInstanceTemplate.getConfigurationProperties(),
+          ConfigurationPropertiesUtil.asConfigurationPropertyList(
+              AzureComputeInstanceTemplateConfigurationProperty.values()));
 
   public static List<ConfigurationProperty> getConfigurationProperties() {
     return CONFIGURATION_PROPERTIES;
   }
 
   public AzureComputeInstanceTemplate(String name, Configured configuration,
-    Map<String, String> tags,
-    LocalizationContext providerLocalizationContext) {
+      Map<String, String> tags, LocalizationContext providerLocalizationContext) {
     super(name, configuration, tags, providerLocalizationContext);
   }
 }

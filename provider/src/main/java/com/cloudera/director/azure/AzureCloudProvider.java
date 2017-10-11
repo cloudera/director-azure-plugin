@@ -31,7 +31,6 @@ import com.cloudera.director.spi.v1.provider.ResourceProvider;
 import com.cloudera.director.spi.v1.provider.ResourceProviderMetadata;
 import com.cloudera.director.spi.v1.provider.util.AbstractCloudProvider;
 import com.cloudera.director.spi.v1.provider.util.SimpleCloudProviderMetadataBuilder;
-import com.microsoft.windowsazure.management.configuration.ManagementConfiguration;
 
 import java.util.Collections;
 import java.util.NoSuchElementException;
@@ -44,67 +43,63 @@ import org.slf4j.LoggerFactory;
  */
 public class AzureCloudProvider extends AbstractCloudProvider {
 
-  private AzureCredentials credentials;
-
   private static final Logger LOG = LoggerFactory.getLogger(AzureCloudProvider.class);
 
   /**
    * The cloud provider ID.
-   */
+    */
   public static final String ID = "azure";
-  public static final CloudProviderMetadata METADATA =
-    new SimpleCloudProviderMetadataBuilder()
+
+  static final CloudProviderMetadata METADATA = new SimpleCloudProviderMetadataBuilder()
       .id(ID)
-      .name("Microsoft Azure Cloud Platform")
-      .description("A provider implementation for provisioning virtual resources on Microsoft Azure " +
-        "Cloud Platform.")
+      .name("Microsoft Azure")
+      .description("A provider implementation that provisions virtual resources on Microsoft " +
+          "Azure.")
       .configurationProperties(Collections.<ConfigurationProperty>emptyList())
       .credentialsProviderMetadata(AzureCredentialsProvider.METADATA)
       .resourceProviderMetadata(Collections.singletonList(AzureComputeProvider.METADATA))
       .build();
 
-  public AzureCloudProvider(AzureCredentials creds, LocalizationContext rootLocalizationContext) {
+  private AzureCredentials credentials;
+
+  public AzureCloudProvider(AzureCredentials credentials,
+      LocalizationContext rootLocalizationContext) {
     super(METADATA, rootLocalizationContext);
-    this.credentials = creds;
+    this.credentials = credentials;
   }
 
   /**
-   * Creates an AzureComputeProvider object. Also verifies the credentials provider in config.
+   * Creates an AzureComputeProvider object. Also verifies the credentials provided in config unless
+   * the flag to validate credentials is false.
    *
-   * @param resourceProviderId  resource provider ID
-   * @param configuration       resource provider configuration
-   * @return an AzureComputeProvider object
-   * @throws AuthenticationException if the credentials are invalid
+   * @param resourceProviderId the resource provider ID (should be the azure ID)
+   * @param configuration resource provider configuration
+   * @return and AzureComputeProvider object
+   * @throws RuntimeException if credentials are invalid
    */
-  public ResourceProvider createResourceProvider(String resourceProviderId, Configured configuration) {
-    // validate credentials
-    if (!AzurePluginConfigHelper.getValidateCredentialsFlag()) {
-      LOG.info("Skipping Azure credential validation with Azure backend.");
-    } else {
-      // Verify the credentials by trying to get an Azure config.
-      credentials.createConfiguration();
+  @Override
+  public ResourceProvider createResourceProvider(String resourceProviderId,
+      Configured configuration) {
+    // check that this is really the Azure provider ID
+    if (!AzureComputeProvider.METADATA.getId().equals(resourceProviderId)) {
+      throw new NoSuchElementException("Invalid provider id: " + resourceProviderId);
     }
 
-    if (AzureComputeProvider.METADATA.getId().equals(resourceProviderId)) {
-      // AZURE_SDK Azure SDK requires the following calls to correctly create clients.
-      ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
-      Thread.currentThread().setContextClassLoader(ManagementConfiguration.class.getClassLoader());
-      try {
-        return new AzureComputeProvider(configuration, credentials, getLocalizationContext());
-      } catch (Exception e) {
-        throw new RuntimeException(e);
-      } finally {
-        Thread.currentThread().setContextClassLoader(contextLoader);
-      }
+    if (AzurePluginConfigHelper.validateCredentials()) {
+      // validate credentials by trying to authenticate with Azure
+      credentials.validate();
+    } else {
+      LOG.info("Skipping Azure credential validation with Azure backend.");
     }
-    throw new NoSuchElementException("Invalid provider id: " + resourceProviderId);
+
+    return new AzureComputeProvider(configuration, credentials, getLocalizationContext());
   }
 
   @Override
   protected ConfigurationValidator getResourceProviderConfigurationValidator(
-    ResourceProviderMetadata resourceProviderMetadata) {
-    if (!AzurePluginConfigHelper.getValidateResourcesFlag()) {
-      LOG.info("Skip all compute provider validator checks.");
+      ResourceProviderMetadata resourceProviderMetadata) {
+    if (!AzurePluginConfigHelper.validateResources()) {
+      LOG.info("Skipping all compute provider validator checks.");
       return resourceProviderMetadata.getProviderConfigurationValidator();
     }
 
@@ -115,6 +110,6 @@ public class AzureCloudProvider extends AbstractCloudProvider {
       throw new NoSuchElementException("Invalid provider id: " + resourceProviderMetadata.getId());
     }
     return new CompositeConfigurationValidator(METADATA.getProviderConfigurationValidator(),
-      providerSpecificValidator);
+        providerSpecificValidator);
   }
 }

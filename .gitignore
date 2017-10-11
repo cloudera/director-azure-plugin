@@ -17,8 +17,8 @@ dependency-reduced-pom.xml
 *.war
 *.ear
 
-
-*.DS_Storei
+# macOS
+*.DS_Store
 
 # Eclipse
 *.project

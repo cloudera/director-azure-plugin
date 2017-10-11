@@ -1,6 +1,0 @@
-{
-  "fileUris": [
-    "https://raw.githubusercontent.com/Azure/azure-quickstart-templates/master/cloudera-on-centos/scripts/prepare-datanode-disks.sh"
-  ],
-  "commandToExecute": "sh prepare-datanode-disks.sh"
-}
