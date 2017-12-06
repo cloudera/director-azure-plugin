@@ -118,7 +118,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       checkUseCustomImage(directorConfig, accumulator, localizationContext, azure);
       checkImplicitMsiGroupName(directorConfig, accumulator, localizationContext);
     } catch (Exception e) {
-      LOG.error(genericErrorMsg, e);
+      LOG.debug(genericErrorMsg, e);
       // use null key to indicate generic error
       ConfigurationPropertyToken token = null;
       addError(accumulator, token, localizationContext, null, genericErrorMsg, e);
@@ -145,7 +145,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     if (!AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
         .getStringList(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED)
         .contains(vmSize)) {
-      LOG.error(String.format(virtualMachineMsg, vmSize));
+      LOG.debug(String.format(virtualMachineMsg, vmSize));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
           localizationContext, null, virtualMachineMsg, vmSize);
     }
@@ -178,7 +178,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     Matcher matcher = pattern.matcher(suffix);
 
     if (!matcher.find()) {
-      LOG.error(String.format(fqdnSuffixMsg, suffix, regex));
+      LOG.debug(String.format(fqdnSuffixMsg, suffix, regex));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX,
           localizationContext, null, fqdnSuffixMsg, suffix, regex);
     }
@@ -205,7 +205,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     Matcher matcher = pattern.matcher(instancePrefix);
 
     if (!matcher.find()) {
-      LOG.error(String.format(instanceNamePrefixMsg, instancePrefix, regex));
+      LOG.debug(String.format(instanceNamePrefixMsg, instancePrefix, regex));
       addError(accumulator,
           InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX,
           localizationContext, null, instanceNamePrefixMsg, instancePrefix, regex);
@@ -273,7 +273,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     // validate that the storage account type (Premium_LRS by default) is a valid AccountType enum
     if (SkuName.fromString(storageAccountType) == null) {
       // logging for current storage
-      LOG.error(String.format(invalidStorageAccountTypeMsg, storageAccountType,
+      LOG.debug(String.format(invalidStorageAccountTypeMsg, storageAccountType,
           Arrays.asList(SkuName.values())));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE,
           localizationContext, null, invalidStorageAccountTypeMsg, storageAccountType,
@@ -287,7 +287,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     if (!AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
         .getStringList(Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)
         .contains(storageAccountType)) {
-      LOG.error(String.format(unsupportedStorageAccountTypesMsg, storageAccountType,
+      LOG.debug(String.format(unsupportedStorageAccountTypesMsg, storageAccountType,
           AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
               .getStringList(Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES)));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE,
@@ -313,7 +313,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       if (!AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
           .getStringList(Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)
           .contains(diskSize)) {
-        LOG.error(String.format(premiumDiskSizeMissingInConfigMsg, diskSize,
+        LOG.debug(String.format(premiumDiskSizeMissingInConfigMsg, diskSize,
             AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
                 .getStringList(Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
@@ -329,13 +329,13 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       // validate that the disk size is between 1 and the max value inclusive
       int diskSizeGB = Integer.parseInt(diskSize);
       if (diskSizeGB < 1) {
-        LOG.error(String.format(standardDiskSizeLessThanMinMsg, diskSize));
+        LOG.debug(String.format(standardDiskSizeLessThanMinMsg, diskSize));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
             localizationContext, null, standardDiskSizeLessThanMinMsg, diskSize);
       } else if (diskSizeGB > Integer.parseInt(
           AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
               .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE))) {
-        LOG.error(String.format(standardDiskSizeGreaterThanMaxMsg, diskSize,
+        LOG.debug(String.format(standardDiskSizeGreaterThanMaxMsg, diskSize,
             AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
                 .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE)));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
@@ -369,7 +369,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         .getStringList(Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES);
 
     if (disallowedUsernames.contains(sshUsername)) {
-      LOG.error(String.format(disallowedUsernamesMsg, sshUsername, disallowedUsernames));
+      LOG.debug(String.format(disallowedUsernamesMsg, sshUsername, disallowedUsernames));
       addError(accumulator,
           ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME,
           localizationContext, null, disallowedUsernamesMsg, sshUsername, disallowedUsernames);
@@ -397,7 +397,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         localizationContext);
 
     if (azure.resourceGroups().getByName(computeRgName) == null) {
-      LOG.error(String.format(computeResourceGroupMsg, computeRgName));
+      LOG.debug(String.format(computeResourceGroupMsg, computeRgName));
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
           localizationContext, null, computeResourceGroupMsg, computeRgName);
@@ -438,7 +438,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         localizationContext);
 
     if (azure.resourceGroups().getByName(vnrgName) == null) {
-      LOG.error(String.format(virtualNetworkResourceGroupMsg, vnrgName));
+      LOG.debug(String.format(virtualNetworkResourceGroupMsg, vnrgName));
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP,
           localizationContext, null, virtualNetworkResourceGroupMsg, vnrgName);
@@ -450,7 +450,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     // check that the RG contains the VN
     Network vn = azure.networks().getByResourceGroup(vnrgName, vnName);
     if (vn == null) {
-      LOG.error(String.format(virtualNetworkMsg, vnName, vnrgName));
+      LOG.debug(String.format(virtualNetworkMsg, vnName, vnrgName));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK,
           localizationContext, null, virtualNetworkMsg, vnName, vnrgName);
 
@@ -460,7 +460,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
     // check that the VN is in the environment's region
     if (!vn.regionName().equalsIgnoreCase(region)) {
-      LOG.error(String.format(virtualNetworkNotInRegionMsg, vnName, region));
+      LOG.debug(String.format(virtualNetworkNotInRegionMsg, vnName, region));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK,
           localizationContext, null, virtualNetworkMsg, vnName, region);
 
@@ -470,7 +470,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
     // check that the VN contains the subnet
     if (!vn.subnets().containsKey(subnetName)) {
-      LOG.error(String.format(subnetMsg, subnetName, vnName));
+      LOG.debug(String.format(subnetMsg, subnetName, vnName));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME,
           localizationContext, null, subnetMsg, subnetName, vnName);
     }
@@ -496,7 +496,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         localizationContext);
 
     if (azure.resourceGroups().getByName(nsgrgName) == null) {
-      LOG.error(String.format(networkSecurityGroupResourceGroupMsg, nsgrgName));
+      LOG.debug(String.format(networkSecurityGroupResourceGroupMsg, nsgrgName));
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP,
           localizationContext, null, networkSecurityGroupResourceGroupMsg, nsgrgName);
@@ -526,7 +526,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
     // Check that the NSG is in the RG
     if (azure.networkSecurityGroups().getByResourceGroup(nsgrgName, nsgName) == null) {
-      LOG.error(String.format(networkSecurityGroupNotInRGMsg, nsgName, nsgrgName));
+      LOG.debug(String.format(networkSecurityGroupNotInRGMsg, nsgName, nsgrgName));
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
           localizationContext, null, networkSecurityGroupNotInRGMsg, nsgName, nsgrgName);
@@ -538,7 +538,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     // Check that the NSG is in the region
     if (!azure.networkSecurityGroups().getByResourceGroup(nsgrgName, nsgName).regionName()
         .equals(region)) {
-      LOG.error(String.format(networkSecurityGroupNotInRegionMsg, nsgName, region));
+      LOG.debug(String.format(networkSecurityGroupNotInRegionMsg, nsgName, region));
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP,
           localizationContext, null, networkSecurityGroupNotInRegionMsg, nsgName, region);
@@ -591,7 +591,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     // Check that the AS is in the RG
     AvailabilitySet as = azure.availabilitySets().getByResourceGroup(computeRgName, asName);
     if (as == null) {
-      LOG.error(String.format(availabilitySetNotInRGMsg, asName, computeRgName));
+      LOG.debug(String.format(availabilitySetNotInRGMsg, asName, computeRgName));
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
           localizationContext, null, availabilitySetNotInRGMsg, asName, computeRgName);
@@ -602,7 +602,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
     // Check that the AS is in the region
     if (!as.regionName().equals(region)) {
-      LOG.error(String.format(availabilitySetNotInRegionMsg, asName, region));
+      LOG.debug(String.format(availabilitySetNotInRegionMsg, asName, region));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
           localizationContext, null, availabilitySetNotInRegionMsg, asName, region);
     }
@@ -628,7 +628,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       // trim the list
       clouderaSupportedVMSizes.retainAll(azureSupportedVmSizes);
 
-      LOG.error(String.format(availabilitySetVmMismatchMsg, vmSize, asName,
+      LOG.debug(String.format(availabilitySetVmMismatchMsg, vmSize, asName,
           clouderaSupportedVMSizes));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
           localizationContext, null, availabilitySetVmMismatchMsg, vmSize, asName,
@@ -645,14 +645,14 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       // Propagate the right error
       if (selectedDiskType == AvailabilitySetSkuTypes.MANAGED) {
         // Managed Disks selected, but AS supports Storage Accounts
-        LOG.error(String.format(availabilitySetManagedDisksMismatchMsg, asName));
+        LOG.debug(String.format(availabilitySetManagedDisksMismatchMsg, asName));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
             localizationContext, null, availabilitySetManagedDisksMismatchMsg, asName);
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
             localizationContext, null, availabilitySetManagedDisksMismatchMsg, asName);
       } else {
         // Storage Accounts selected, but AS supports Managed Disks
-        LOG.error(String.format(availabilitySetStorageAccountsMismatchMsg, asName));
+        LOG.debug(String.format(availabilitySetStorageAccountsMismatchMsg, asName));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
             localizationContext, null, availabilitySetStorageAccountsMismatchMsg, asName);
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
@@ -707,7 +707,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       version = image.version();
 
     } catch (ValidationException e) {
-      LOG.error(e.getMessage());
+      LOG.debug(e.getMessage());
       addError(accumulator,
           ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
           localizationContext, null, e.getMessage());
@@ -729,14 +729,14 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     // regular image validation
     try {
       if (azure.virtualMachineImages().getImage(region, publisher, offer, sku, version) == null) {
-        LOG.error(String.format(imageMissingInAzureMsg, region, publisher, offer, sku, version));
+        LOG.debug(String.format(imageMissingInAzureMsg, region, publisher, offer, sku, version));
         addError(accumulator,
             ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
             localizationContext, null, imageMissingInAzureMsg, region, publisher, offer, sku,
             version);
       }
     } catch (CloudException e) {
-      LOG.error(String.format(imageInvalidMsg, region, publisher, offer, sku, version));
+      LOG.debug(String.format(imageInvalidMsg, region, publisher, offer, sku, version));
       addError(accumulator,
           ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
           localizationContext, null, imageInvalidMsg, region, publisher, offer, sku, version);
@@ -777,7 +777,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     }
 
     if (!useManagedDisk) {
-      LOG.error(String.format(customImageOnlySupportsMdErrorMsg));
+      LOG.debug(String.format(customImageOnlySupportsMdErrorMsg));
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
           localizationContext, null, customImageOnlySupportsMdErrorMsg);
@@ -791,21 +791,21 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       image = azure.virtualMachineCustomImages().getById(imageId);
     } catch (Exception e) {
       // AZURE_SDK FIXME Azure SDK throws NPE if the image does not exist
-      LOG.error(String.format(customImageGetByIdErrorMsg, imageId, e.getMessage()), e);
+      LOG.debug(String.format(customImageGetByIdErrorMsg, imageId, e.getMessage()), e);
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
           localizationContext, null, customImageGetByIdErrorMsg, imageId, e.getMessage());
       return;
     }
     if (image == null) {
-      LOG.error(String.format(customImageDoesNotExistErrorMsg, imageId));
+      LOG.debug(String.format(customImageDoesNotExistErrorMsg, imageId));
       addError(accumulator,
           ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
           localizationContext, null, customImageDoesNotExistErrorMsg, imageId);
       return;
     }
     if (!image.region().toString().equals(region)) {
-      LOG.error(String.format(customImageInDifferentRegionErrorMsg, imageId, image.region(),
+      LOG.debug(String.format(customImageInDifferentRegionErrorMsg, imageId, image.region(),
           region));
       addError(accumulator,
           ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
@@ -818,7 +818,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     try {
       Configurations.parseCustomImagePurchasePlanFromConfig(directorConfig, localizationContext);
     } catch (ValidationException e) {
-      LOG.error(e.getMessage());
+      LOG.debug(e.getMessage());
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_IMAGE_PLAN,
           localizationContext, null, e.getMessage());
@@ -863,7 +863,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     GraphRbacManager graphRbacManager = credentials.getGraphRbacManager();
     ActiveDirectoryGroup aadGroup = graphRbacManager.groups().getByName(aadGroupName);
     if (aadGroup == null) {
-      LOG.error(String.format(aadGroupDoesNotExistMsg, aadGroupName, graphRbacManager.tenantId()));
+      LOG.debug(String.format(aadGroupDoesNotExistMsg, aadGroupName, graphRbacManager.tenantId()));
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME,
           localizationContext, null, aadGroupDoesNotExistMsg, aadGroupName,

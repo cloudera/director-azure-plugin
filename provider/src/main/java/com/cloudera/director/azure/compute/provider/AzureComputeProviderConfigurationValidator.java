@@ -64,7 +64,7 @@ public class AzureComputeProviderConfigurationValidator implements Configuration
 
     if (!pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS)
         .contains(regionName)) {
-      LOG.error(String.format(regionNotSupportedMsg, regionName,
+      LOG.debug(String.format(regionNotSupportedMsg, regionName,
           pluginConfigProviderSection.getStringList(AZURE_CONFIG_PROVIDER_REGIONS)));
       addError(accumulator, AzureComputeProviderConfigurationProperty.REGION, localizationContext,
           null, regionNotSupportedMsg, regionName,

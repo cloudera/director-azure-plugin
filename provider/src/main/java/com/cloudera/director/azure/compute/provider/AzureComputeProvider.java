@@ -311,42 +311,64 @@ public class AzureComputeProvider
     stopwatch.start();
 
     boolean asSpecified;
+    // custom log message depending on what we're searching for
     if (availabilitySetName == null || availabilitySetName.trim().isEmpty()) {
       asSpecified = false;
-      LOG.info("Searching for common Azure environment resources: Virtual Network {}, Network " +
-          "Security Group {}, (no Availability Set specified - skipping).", vnName, nsgName);
+      // empty AS - log that we're not searching for it
+      LOG.info("Searching for common Azure environment resources: Virtual Network {}, and Network " +
+          "Security Group {} (no Availability Set specified - skipping).", vnName, nsgName);
     } else {
       asSpecified = true;
       LOG.info("Searching for common Azure environment resources: Virtual Network {}, Network " +
-          "Security Group {}, Availability Set {}.", vnName, nsgName, availabilitySetName);
+          "Security Group {}, and Availability Set {}.", vnName, nsgName, availabilitySetName);
     }
     Network vnet;
     NetworkSecurityGroup nsg;
     AvailabilitySet as = null;
-    String resourceName = "";
+
+    // Get common Azure resources for: VNET, NSG, and AS (if applicable).
     try {
       Azure azure = credentials.authenticate();
-      // Get common Azure resources: VNET, NSG & AS
-      // Invoke name() call to trigger an Azure backend call to make sure the common resources
-      // are still present
-      resourceName = "Virtual Network";
-      vnet = azure.networks().getByResourceGroup(vnrgName, vnName);
-      vnet.name();
-      resourceName = "Network Security Group";
-      nsg = azure.networkSecurityGroups().getByResourceGroup(nsgrgName, nsgName);
-      nsg.name();
+
+      // Invoke name() call to trigger an Azure backend call to make sure the common resources are still present.
+      try {
+        vnet = azure.networks().getByResourceGroup(vnrgName, vnName);
+        vnet.name();
+      } catch (Exception e) {
+        String errorMessage = String.format("Unable to locate common Azure Virtual Network '%s' in Resource Group '%s'.",
+            vnName, vnrgName);
+        LOG.error(errorMessage);
+        throw new UnrecoverableProviderException(errorMessage, e);
+      }
+
+      try {
+        nsg = azure.networkSecurityGroups().getByResourceGroup(nsgrgName, nsgName);
+        nsg.name();
+      } catch (Exception e) {
+        String errorMessage = String.format("Unable to locate common Azure Network Security Group '%s' in Resource " +
+            "Group '%s'.", nsgName, nsgrgName);
+        LOG.error(errorMessage);
+        throw new UnrecoverableProviderException(errorMessage, e);
+      }
+
       if (asSpecified) {
-        resourceName = "Availability Set";
-        as = azure.availabilitySets().getByResourceGroup(computeRgName, availabilitySetName);
-        as.name();
+        try {
+          as = azure.availabilitySets().getByResourceGroup(computeRgName, availabilitySetName);
+          as.name();
+        } catch (Exception e) {
+          String errorMessage = String.format("Unable to locate common Azure Availability Set '%s' in Resource Group '%s'",
+              vnName, computeRgName);
+          LOG.error(errorMessage);
+          throw new UnrecoverableProviderException(errorMessage, e);
+        }
       }
     } catch (Exception e) {
-      String errorMessage = String.format("Unable to locate common Azure %s: %s", resourceName,
-          vnName);
+      String errorMessage = "Unable to authenticate with Azure.";
       LOG.error(errorMessage);
       throw new UnrecoverableProviderException(errorMessage, e);
     }
     LOG.info("Successfully found common Azure resources.");
+
 
     Set<ServiceFuture> vmCreates = new HashSet<>();
     final List<String> successfullyCreatedInstanceIds = Collections
@@ -450,7 +472,7 @@ public class AzureComputeProvider
 
     // timeout handling
     if (vmCreates.size() > 0) {
-      LOG.error("Creation for the following VMs have timed out after {} seconds: ",
+      LOG.error("Creation for the following VMs have timed out after {} seconds: {}.",
           stopwatch.getTime() / 1000, getNewSubset(instanceIds, successfullyCreatedInstanceIds));
       for (ServiceFuture future : vmCreates) {
         // cancelling future does not trigger error handling
