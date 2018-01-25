@@ -147,6 +147,24 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   }
 
   @Test
+  public void checkVMSizeWithValidDSTypeVMExpectNoError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
+    map.put(VMSIZE, "STANDARD_DS12_V2");
+
+    validator.checkVMSize(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkVMSizeWithValidDTypeVMExpectNoError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
+    map.put(VMSIZE, "STANDARD_D12_V2");
+
+    validator.checkVMSize(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
   public void checkVMSizeWithInvalidTemplateExpectAccumulatesErrors() throws Exception {
     Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
     map.put(VMSIZE, "invalid");

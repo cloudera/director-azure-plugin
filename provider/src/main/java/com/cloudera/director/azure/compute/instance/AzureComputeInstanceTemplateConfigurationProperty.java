@@ -54,16 +54,21 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
       .name("Virtual Machine Size")
       .addValidValues(
           "STANDARD_DS15_V2",
-          "STANDARD_DS14",
           "STANDARD_DS14_V2",
-          "STANDARD_DS13",
           "STANDARD_DS13_V2",
           "STANDARD_DS12_V2",
+          "STANDARD_D15_V2",
+          "STANDARD_D14_V2",
+          "STANDARD_D13_V2",
+          "STANDARD_D12_V2",
+          "STANDARD_DS14",
+          "STANDARD_DS13",
+          "STANDARD_D14",
+          "STANDARD_D13",
           "STANDARD_GS5",
           "STANDARD_GS4")
-      .defaultDescription("The machine type.<br /><a target='_blank' href='https://azure." +
-          "microsoft.com/en-us/documentation/articles/virtual-machines-linux-sizes/'>More " +
-          "Information</a>")
+      .defaultDescription("The machine type.<br /><a target='_blank' " +
+          "href='https://docs.microsoft.com/en-us/azure/virtual-machines/linux/sizes'>More Information</a>")
       .defaultErrorMessage("Virtual Machine Size is required.")
       .widget(ConfigurationProperty.Widget.OPENLIST)
       .required(true)

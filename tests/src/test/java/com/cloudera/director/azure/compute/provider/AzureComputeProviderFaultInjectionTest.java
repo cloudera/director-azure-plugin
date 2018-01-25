@@ -38,7 +38,6 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resourc
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.SkuName;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.StorageAccount;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
@@ -244,7 +243,7 @@ public class AzureComputeProviderFaultInjectionTest {
 
   /**
    * This method stresses the allocate cleanup logic by forcing client side creatables to throw exceptions when
-   * they're being built, which in turn causes allocate to throw a TransientProviderException
+   * they're being built, which in turn causes allocate to throw a UnrecoverableProviderException
    * because not enough VMs were created. Then the VM cleanup logic is tested to verify that all VMs
    * and their resources are cleaned up.
    *
@@ -357,7 +356,7 @@ public class AzureComputeProviderFaultInjectionTest {
     LOG.info("1. allocate");
     try {
       provider.allocate(template, instanceIds, instanceIds.size());
-    } catch (TransientProviderException e) {
+    } catch (UnrecoverableProviderException e) {
       LOG.info("1.b. allocate failed on purpose");
     }
 
@@ -639,7 +638,7 @@ public class AzureComputeProviderFaultInjectionTest {
     try {
       provider.allocate(template, secondPassInstanceIds, secondPassInstanceIds.size());
       LOG.error("Allocate did not fail (it should have)");
-    } catch (TransientProviderException e) {
+    } catch (UnrecoverableProviderException e) {
       LOG.info("2.b. allocate failed on purpose");
       allocateFailedOnPurpose = true;
     }
@@ -871,7 +870,7 @@ public class AzureComputeProviderFaultInjectionTest {
     LOG.info("1. allocate vm with custom image but missing purchase plan");
     try {
       provider.allocate(templateWithoutPlan, instanceIds, instanceIds.size());
-    } catch (TransientProviderException e) {
+    } catch (UnrecoverableProviderException e) {
       LOG.info("Caught expected exception: ", e);
     }
 
@@ -893,7 +892,7 @@ public class AzureComputeProviderFaultInjectionTest {
     LOG.info("4. allocate vm with custom image but with wrong purchase plan");
     try {
       provider.allocate(templateWithWrongPlan, instanceIds, instanceIds.size());
-    } catch (TransientProviderException e) {
+    } catch (UnrecoverableProviderException e) {
       LOG.info("Caught expected exception: ", e);
     }
 
@@ -949,8 +948,8 @@ public class AzureComputeProviderFaultInjectionTest {
     LOG.info("1. allocate");
     try {
       provider.allocate(template, instanceIds, 1);
-    } catch (TransientProviderException e) {
-      LOG.info("Caught expected TransientProviderException:", e);
+    } catch (UnrecoverableProviderException e) {
+      LOG.info("Caught expected UnrecoverableProviderException:", e);
     }
 
     // 2. verify that no instance is created

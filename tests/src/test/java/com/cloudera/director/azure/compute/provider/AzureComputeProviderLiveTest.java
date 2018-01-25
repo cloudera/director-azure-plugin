@@ -33,7 +33,6 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrb
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.SkuName;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.InstanceStatus;
-import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
@@ -170,7 +169,7 @@ public class AzureComputeProviderLiveTest {
     boolean mdpsExceptionThrown = false;
     try {
       fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "4096", 1, false, false, null);
-    } catch (TransientProviderException e) {
+    } catch (UnrecoverableProviderException e) {
       mdpsExceptionThrown = true;
     }
 
@@ -178,7 +177,7 @@ public class AzureComputeProviderLiveTest {
     boolean sapsExceptionThrown = false;
     try {
       fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "4096", 1, false, false, null);
-    } catch (TransientProviderException e) {
+    } catch (UnrecoverableProviderException e) {
       sapsExceptionThrown = true;
     }
 
@@ -186,7 +185,7 @@ public class AzureComputeProviderLiveTest {
     boolean mdssExceptionThrown = false;
     try {
       fullCycleHelper(true, SkuName.STANDARD_LRS.toString(), "4096", 1, false, false, null);
-    } catch (TransientProviderException e) {
+    } catch (UnrecoverableProviderException e) {
       mdssExceptionThrown = true;
     }
 
@@ -194,7 +193,7 @@ public class AzureComputeProviderLiveTest {
     boolean sassExceptionThrown = false;
     try {
       fullCycleHelper(false, SkuName.STANDARD_LRS.toString(), "4096", 1, false, false, null);
-    } catch (TransientProviderException e) {
+    } catch (UnrecoverableProviderException e) {
       sassExceptionThrown = true;
     }
 
