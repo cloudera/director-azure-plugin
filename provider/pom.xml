@@ -23,12 +23,12 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>azure</artifactId>
-        <version>2.0.2</version>
+        <version>2.1.0</version>
     </parent>
 
     <groupId>com.cloudera.director</groupId>
     <artifactId>azure-provider</artifactId>
-    <version>2.0.2</version>
+    <version>2.1.0</version>
 
     <name>Cloudera-Director-Azure-Plugin</name>
 
@@ -49,10 +49,10 @@
         <maven-checkstyle-plugin.version>2.17</maven-checkstyle-plugin.version>
         <maven-pmd-plugin.version>3.8</maven-pmd-plugin.version>
         <findbugs-maven-plugin.version>3.0.4</findbugs-maven-plugin.version>
+        <jsr305.version>2.0.2</jsr305.version>
         <maven-jxr-plugin.version>2.5</maven-jxr-plugin.version>
 
-        <azure.version>1.2.1</azure.version>
-        <azure-client.version>1.1.0</azure-client.version>
+        <azure.version>1.5.1</azure.version>
 
         <java.version>1.7</java.version>
     </properties>
@@ -122,26 +122,13 @@
             <groupId>com.microsoft.azure</groupId>
             <artifactId>azure</artifactId>
             <version>${azure.version}</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.microsoft.azure</groupId>
-                    <artifactId>azure-client-runtime</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.microsoft.azure</groupId>
-                    <artifactId>azure-client-authentication</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
+
         <dependency>
-            <groupId>com.microsoft.azure</groupId>
-            <artifactId>azure-client-runtime</artifactId>
-            <version>${azure-client.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>com.microsoft.azure</groupId>
-            <artifactId>azure-client-authentication</artifactId>
-            <version>${azure-client.version}</version>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+            <version>${jsr305.version}</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

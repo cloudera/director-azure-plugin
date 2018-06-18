@@ -59,13 +59,10 @@ public final class Configurations {
   public static final String AZURE_SDK_CONFIG_MAX_IDLE_CONN = "azure-sdk-max-idle-connections";
 
   public static final String AZURE_CONFIG_INSTANCE = "instance";
-  public static final String AZURE_CONFIG_INSTANCE_SUPPORTED = "supported-instances";
   public static final String AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES =
       "supported-storage-account-types";
-  public static final String AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES =
-      "supported-premium-data-disk-sizes";
-  public static final String AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE =
-      "maximum-standard-data-disk-size";
+  public static final String AZURE_CONFIG_INSTANCE_MAXIMUM_DISK_SIZE =
+      "maximum-disk-size";
   public static final String AZURE_CONFIG_INSTANCE_PREFIX_REGEX = "instance-prefix-regex";
   public static final String AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX = "dns-fqdn-suffix-regex";
   public static final String AZURE_CONFIG_DISALLOWED_USERNAMES = "azure-disallowed-usernames";
@@ -135,10 +132,8 @@ public final class Configurations {
    */
   public static List<String> getRequiredInstanceFields() {
     return Arrays.asList(
-        Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED,
         Configurations.AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES,
-        Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES,
-        Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE,
+        Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_DISK_SIZE,
         Configurations.AZURE_CONFIG_INSTANCE_PREFIX_REGEX,
         Configurations.AZURE_CONFIG_INSTANCE_FQDN_SUFFIX_REGEX,
         Configurations.AZURE_CONFIG_DISALLOWED_USERNAMES);

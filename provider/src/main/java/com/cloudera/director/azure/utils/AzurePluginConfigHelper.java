@@ -157,12 +157,6 @@ public class AzurePluginConfigHelper {
       }
 
       try {
-        validateSupportedInstances(instanceSection);
-      } catch (ConfigException | IllegalArgumentException e) {
-        errors.add(e.getMessage());
-      }
-
-      try {
         validateStorageAccountType(instanceSection);
       } catch (ConfigException | IllegalArgumentException e) {
         errors.add(e.getMessage());
@@ -319,28 +313,6 @@ public class AzurePluginConfigHelper {
               "have a value in seconds that is greater than 0 and less than %d",
           Configurations.AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS,
           maxTimeoutValue));
-    }
-  }
-
-  /**
-   * Validates that the passed in config object contains a valid supported instances section by
-   * checking that the param is:
-   * - not absent, null, or wrong type
-   * - not an empty list
-   * - xxx/future look into VirtualMachineSizeTypes to check for valid VM Types
-   *
-   * @param instanceSection the instance section of the Azure Plugin config
-   * @throws IllegalArgumentException if the supported instances config is empty
-   * @throws ConfigException if the supported instances config section is missing or the wrong type
-   */
-  static void validateSupportedInstances(Config instanceSection) throws IllegalArgumentException,
-      ConfigException {
-    List<String> instanceTypes =
-        instanceSection.getStringList(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED);
-    if (instanceTypes.size() == 0) {
-      throw new IllegalArgumentException(String.format("The list of supported instance types " +
-              "\"%s\" in the the Azure director plugin configuration is empty.",
-          Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED));
     }
   }
 

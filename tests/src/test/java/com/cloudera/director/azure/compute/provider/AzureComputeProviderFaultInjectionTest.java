@@ -36,6 +36,7 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.PublicIPAddress;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resources.fluentcore.collection.SupportsDeletingById;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.SkuName;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.StorageAccountSkuType;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.StorageAccount;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
@@ -94,7 +95,7 @@ public class AzureComputeProviderFaultInjectionTest {
     launcher.initialize(new File("non_existent_file"), null);
     credentials = TestHelper.getAzureCredentials();
     azure = credentials.authenticate();
-    TestHelper.buildLiveTestEnvironment(azure);
+    TestHelper.buildLiveTestEnvironment(credentials);
   }
 
   @AfterClass
@@ -158,6 +159,118 @@ public class AzureComputeProviderFaultInjectionTest {
     // 3. delete
     LOG.info("3. delete");
     provider.delete(template, instanceIds);
+  }
+
+  @Test
+  public void allocateWithDirector25NamingSchemeExpectNoResourcesLeaked() throws Exception {
+    LOG.info("allocateWithDirector25NamingSchemeExpectNoResourcesLeaked");
+
+    LOG.info("0. set up");
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET.unwrap()
+        .getConfigKey(), TestHelper.TEST_AVAILABILITY_SET_UNMANAGED);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
+        "No");
+    SimpleConfiguration config = new SimpleConfiguration(map);
+
+    Launcher launcher = new AzureLauncher();
+    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
+    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+        TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
+
+    AzureComputeProvider provider = Mockito.spy((AzureComputeProvider) cloudProvider.createResourceProvider(
+        AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig()));
+    AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
+        config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+
+    // the single VM to use for this test
+    String instanceId = UUID.randomUUID().toString();
+    Collection<String> instanceIds = new ArrayList<>();
+    instanceIds.add(instanceId);
+    LOG.info("Using these UUIDs: {}", Arrays.toString(instanceIds.toArray()));
+
+    LOG.info("1. allocate");
+    // custom Storage Account
+    String uniqueSaName = AzureComputeProvider.getFirstGroupOfUuid(UUID.randomUUID().toString());
+    StorageAccount.DefinitionStages.WithCreate storageAccountCreatable = azure
+        .storageAccounts()
+        .define(uniqueSaName)
+        .withRegion(TestHelper.TEST_REGION)
+        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
+        .withSku(StorageAccountSkuType.PREMIUM_LRS);
+    Mockito.doReturn(storageAccountCreatable)
+        .when(provider)
+        .buildStorageAccountCreatable(
+            Mockito.any(Azure.class),
+            Mockito.any(AzureComputeInstanceTemplate.class),
+            ArgumentMatchers.anyString());
+
+    // custom Public IP
+    String uniquePipUuid = UUID.randomUUID().toString();
+    String uniquePipName = AzureComputeProvider.getFirstGroupOfUuid(uniquePipUuid);
+    PublicIPAddress.DefinitionStages.WithCreate publicIpCreatable = azure
+        .publicIPAddresses()
+        .define(uniquePipName)
+        .withRegion(TestHelper.TEST_REGION)
+        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
+        .withLeafDomainLabel(AzureComputeProvider.getDnsName(uniquePipUuid, template.getInstanceNamePrefix()));
+    Mockito.doReturn(publicIpCreatable)
+        .when(provider)
+        .buildPublicIpCreatable(
+            Mockito.any(Azure.class),
+            Mockito.any(AzureComputeInstanceTemplate.class),
+            ArgumentMatchers.anyString(),
+            ArgumentMatchers.anyString());
+
+    // custom Network Interface
+    String uniqueNicName = AzureComputeProvider.getFirstGroupOfUuid(UUID.randomUUID().toString());
+    Network vnet = azure.networks().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, TestHelper.TEST_VIRTUAL_NETWORK);
+    NetworkSecurityGroup nsg = azure.networkSecurityGroups()
+        .getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, TestHelper.TEST_NETWORK_SECURITY_GROUP);
+    NetworkInterface.DefinitionStages.WithCreate nicCreatable = azure
+        .networkInterfaces()
+        .define(uniqueNicName)
+        .withRegion(TestHelper.TEST_REGION)
+        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
+        .withExistingPrimaryNetwork(vnet)
+        .withSubnet("default")
+        // AZURE_SDK there is no way to set the IP allocation method to static
+        .withPrimaryPrivateIPAddressDynamic()
+        .withExistingNetworkSecurityGroup(nsg);
+    if (map.get(AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP.unwrap().getConfigKey()).equals("Yes")) {
+      nicCreatable = nicCreatable.withNewPrimaryPublicIPAddress(publicIpCreatable);
+    }
+    Mockito.doReturn(nicCreatable)
+        .when(provider)
+        .buildNicCreatable(
+            Mockito.any(Azure.class),
+            Mockito.any(AzureComputeInstanceTemplate.class),
+            ArgumentMatchers.anyString(),
+            Mockito.any(Network.class),
+            Mockito.any(NetworkSecurityGroup.class),
+            ArgumentMatchers.anyString());
+
+    provider.allocate(template, instanceIds, instanceIds.size());
+
+    LOG.info("2. verify that the custom resources with unique names exist");
+    StorageAccount sa = azure.storageAccounts().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueSaName);
+    Assert.assertNotNull(sa);
+    NetworkInterface ni = azure.networkInterfaces().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueNicName);
+    Assert.assertNotNull(ni);
+    PublicIPAddress pip = azure.publicIPAddresses().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniquePipName);
+    Assert.assertNotNull(pip);
+
+
+    LOG.info("3. delete");
+    provider.delete(template, instanceIds);
+
+    LOG.info("4. verify that the custom resources with unique names have been deleted");
+    sa = azure.storageAccounts().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueSaName);
+    Assert.assertNull(sa);
+    ni = azure.networkInterfaces().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueNicName);
+    Assert.assertNull(ni);
+    pip = azure.publicIPAddresses().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniquePipName);
+    Assert.assertNull(pip);
   }
 
   @Test
@@ -645,7 +758,7 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 3. verify cleanup - no resources should be orphaned
     LOG.info("3. verify cleanup");
-    boolean cleanedUp = checkVmResourceLeak(template, provider, secondPassInstanceIds);
+    boolean cleanedUp = AzureComputeProviderLiveTestHelper.resourcesDeleted(azure, provider, template, secondPassInstanceIds);
     if (!cleanedUp) {
       LOG.error("Test did not clean up all resources.");
     }
@@ -667,70 +780,6 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 5.b. fail the test if cleanup didn't work
     Assert.assertTrue("Test has failed to clean up all resources.", cleanedUp);
-  }
-
-  /**
-   * Helper function to check for VM resource leaks by looking for the resources used by the VM.
-   *
-   * @param template instance template config
-   * @param provider Azure compute provider object
-   * @param instanceIds VM instance IDs (w/o prefix)
-   * @return true if cleanup was successful and no resource was leaked
-   */
-  private boolean checkVmResourceLeak(AzureComputeInstanceTemplate template,
-      AzureComputeProvider provider, Collection<String> instanceIds) {
-    boolean cleanedUp = true; // used to check if anything failed to clean up
-    LocalizationContext templateLocalizationContext =
-        SimpleResourceTemplate.getTemplateLocalizationContext(provider.getLocalizationContext());
-    String rgName = template.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
-        templateLocalizationContext);
-    boolean useManagedDisks = template.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
-        templateLocalizationContext).equals("Yes");
-
-    for (String instanceId : instanceIds) {
-      String commonResourceNamePrefix = AzureComputeProvider.getFirstGroupOfUuid(instanceId);
-
-      // storage
-      if (useManagedDisks) {
-        String osDisk = commonResourceNamePrefix + "-OS";
-        if (azure.disks().getByResourceGroup(rgName, osDisk) != null) {
-          LOG.error("Failed to clean up MD {}", osDisk);
-          cleanedUp = false;
-        }
-        int dataDiskCount = Integer.parseInt(template.getConfigurationValue(
-            AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT,
-            templateLocalizationContext));
-        for (int n = 0; n < dataDiskCount; n += 1) {
-          String dataDisk = commonResourceNamePrefix + "-" + n;
-          if (azure.disks().getByResourceGroup(rgName, dataDisk) != null) {
-            LOG.error("Failed to clean up MD {}", dataDisk);
-            cleanedUp = false;
-          }
-        }
-      } else {
-        if (azure.storageAccounts().getByResourceGroup(rgName, commonResourceNamePrefix) != null) {
-          LOG.error("Failed to clean up storage account {}.", commonResourceNamePrefix);
-          cleanedUp = false;
-        }
-      }
-
-      // nic
-      if (azure.networkInterfaces().getByResourceGroup(rgName, commonResourceNamePrefix) != null) {
-        LOG.error("Failed to clean up Nic {}", commonResourceNamePrefix);
-        cleanedUp = false;
-      }
-
-      // public IP
-      if (azure.publicIPAddresses().getByResourceGroup(rgName, commonResourceNamePrefix) != null) {
-        LOG.error("Failed to clean up Public IP {}", commonResourceNamePrefix);
-        cleanedUp = false;
-      }
-      LOG.info("Resources cleaned up? {}", cleanedUp);
-    }
-
-    return cleanedUp;
   }
 
   @Test
@@ -801,7 +850,7 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 5. verify cleanup - no resources should be orphaned
     LOG.info("Verify cleanup");
-    boolean cleanedUp = checkVmResourceLeak(template, provider, instanceIds);
+    boolean cleanedUp = AzureComputeProviderLiveTestHelper.resourcesDeleted(azure, provider, template, instanceIds);
     if (!cleanedUp) {
       LOG.error("Test did not clean up all resources.");
     }
@@ -882,7 +931,7 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 3. verify there is no resource leak
     LOG.info("3. verify cleanup");
-    if (!checkVmResourceLeak(templateWithoutPlan, provider, instanceIds)) {
+    if (!AzureComputeProviderLiveTestHelper.resourcesDeleted(azure, provider, templateWithoutPlan, instanceIds)) {
       // delete VM image used for testing before failing the test
       CustomVmImageTestHelper.deleteCustomManagedVmImage(customImageUri);
       Assert.fail("VM resource verification failed.");
@@ -904,7 +953,7 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 6. verify there is no resource leak
     LOG.info("6. verify cleanup");
-    if (!checkVmResourceLeak(templateWithoutPlan, provider, instanceIds)) {
+    if (!AzureComputeProviderLiveTestHelper.resourcesDeleted(azure, provider, templateWithoutPlan, instanceIds)) {
       // delete VM image used for testing before failing the test
       CustomVmImageTestHelper.deleteCustomManagedVmImage(customImageUri);
       Assert.fail("VM resource verification failed.");
@@ -960,6 +1009,6 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 3. verify cleanup - no resources should be orphaned
     LOG.info("3. verify cleanup");
-    Assert.assertTrue(checkVmResourceLeak(template, provider, instanceIds));
+    Assert.assertTrue(AzureComputeProviderLiveTestHelper.resourcesDeleted(azure, provider, template, instanceIds));
   }
 }

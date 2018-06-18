@@ -24,6 +24,7 @@ import com.microsoft.azure.AzureEnvironment;
 import com.microsoft.azure.credentials.ApplicationTokenCredentials;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
+import com.microsoft.azure.management.msi.implementation.MSIManager;
 
 import java.util.concurrent.TimeUnit;
 
@@ -103,7 +104,6 @@ public class AzureCredentials {
    * @return base Azure object used to access resource management APIs in Azure
    */
   public Azure authenticate() {
-    LOG.debug("Getting Azure API object (with deferred authentication).");
     return Azure.configure()
         .withConnectionTimeout(AzurePluginConfigHelper.getAzureSdkConnectionTimeout(),
             TimeUnit.SECONDS)
@@ -127,6 +127,21 @@ public class AzureCredentials {
       LOG.error("Failed to authenticate with Azure: " + e.getMessage());
       throw new RuntimeException(e);
     }
+  }
+
+  /**
+   * Returns an MSIManager object for accessing Managed Service Identity APIs in Azure.
+   *
+   * This returned MSIManager object is similar to the Azure object: it has not been authenticated and does not
+   * authenticate with Azure until it is used for a call that requires authentication (i.e. until calling a backend
+   * service). This means that this method can't be used to test for valid credentials.
+   *
+   * To validate that credentials are correct call the validate() method.
+   *
+   * @return base MSIManager object used to access MSI APIs in Azure
+   */
+  public MSIManager getMsiManager() {
+    return MSIManager.authenticate(credentials, subId);
   }
 
   /**

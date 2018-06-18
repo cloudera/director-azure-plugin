@@ -75,8 +75,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   // Map the fields to easy to reference Strings
   private static final String IMAGE = AzureComputeInstanceTemplateConfigurationProperty.IMAGE
       .unwrap().getConfigKey();
-  private static final String VMSIZE = AzureComputeInstanceTemplateConfigurationProperty.VMSIZE
-      .unwrap().getConfigKey();
   private static final String SSH_USERNAME = ComputeInstanceTemplate
       .ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME.unwrap().getConfigKey();
   private static final String INSTANCE_NAME_PREFIX = InstanceTemplate
@@ -137,40 +135,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
 
     TestHelper.setAzurePluginConfigNull();
     TestHelper.setConfigurableImagesNull();
-  }
-
-  @Test
-  public void checkVMSizeWithValidTemplateExpectNoError() throws Exception {
-    validator.checkVMSize(TestHelper.buildValidDirectorUnitTestConfig(), accumulator,
-        localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
-  }
-
-  @Test
-  public void checkVMSizeWithValidDSTypeVMExpectNoError() throws Exception {
-    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
-    map.put(VMSIZE, "STANDARD_DS12_V2");
-
-    validator.checkVMSize(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
-  }
-
-  @Test
-  public void checkVMSizeWithValidDTypeVMExpectNoError() throws Exception {
-    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
-    map.put(VMSIZE, "STANDARD_D12_V2");
-
-    validator.checkVMSize(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
-  }
-
-  @Test
-  public void checkVMSizeWithInvalidTemplateExpectAccumulatesErrors() throws Exception {
-    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
-    map.put(VMSIZE, "invalid");
-
-    validator.checkVMSize(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
   }
 
   @Test
@@ -569,15 +533,21 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
   }
 
   @Test
-  public void checkStorageWithValidPremiumStorageAccountSizesExpectNoError() throws Exception {
+  public void checkStorageWithValidPremiumStorageAccountSizeExpectNoError() throws Exception {
     Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
     map.put(STORAGE_ACCOUNT_TYPE, SkuName.PREMIUM_LRS.toString());
 
     final List<String> diskSizes = new ArrayList<>();
+    diskSizes.add("1");
+    diskSizes.add("511");
     diskSizes.add("512");
+    diskSizes.add("513");
     diskSizes.add("1023");
     diskSizes.add("1024");
+    diskSizes.add("1025");
+    diskSizes.add("2047");
     diskSizes.add("2048");
+    diskSizes.add("2049");
     diskSizes.add("4095");
 
     for (String diskSize : diskSizes) {
@@ -599,11 +569,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
     final List<String> diskSizes = new ArrayList<>();
     diskSizes.add("-1");
     diskSizes.add("0");
-    diskSizes.add("511");
-    diskSizes.add("513");
-    diskSizes.add("1025");
-    diskSizes.add("2047");
-    diskSizes.add("2049");
     diskSizes.add("4096");
 
     for (String diskSize : diskSizes) {

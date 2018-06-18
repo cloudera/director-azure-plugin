@@ -38,8 +38,11 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
           "cloudera-centos-67-latest",
           "cloudera-centos-68-latest",
           "cloudera-centos-72-latest",
+          "cloudera-centos-74-latest",
           "redhat-rhel-67-latest",
-          "redhat-rhel-72-latest")
+          "redhat-rhel-72-latest",
+          "redhat-rhel-74-latest",
+          "redhat-rhel-7-latest")
       .defaultDescription("The VM image to deploy. This can be either the image alias " +
           "referencing an image in the configurable images file or an inline image description " +
           "in the format: /publisher/&lt;publisher&gt;/offer/&lt;offer&gt;/sku/&lt;sku&gt;/version/&lt;version&gt;.")
@@ -65,6 +68,16 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
           "STANDARD_DS13",
           "STANDARD_D14",
           "STANDARD_D13",
+          "STANDARD_D64S_V3",
+          "STANDARD_D32S_V3",
+          "STANDARD_D16S_V3",
+          "STANDARD_D8S_V3",
+          "STANDARD_E2S_V3",
+          "STANDARD_E4S_V3",
+          "STANDARD_E8S_V3",
+          "STANDARD_E16S_V3",
+          "STANDARD_E32S_V3",
+          "STANDARD_E64S_V3",
           "STANDARD_GS5",
           "STANDARD_GS4")
       .defaultDescription("The machine type.<br /><a target='_blank' " +
@@ -254,6 +267,26 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
       .required(false)
       .build()),
 
+  USER_ASSIGNED_MSI_RESOURCE_GROUP(new SimpleConfigurationPropertyBuilder()
+      .configKey("userAssignedMsiResourceGroup")
+      .name("The User Assigned MSI Resource Group")
+      .defaultDescription("The Resource Group that holds the specified User Assigned Managed Service Identity. " +
+          "If this and the User Assigned MSI Name field is left blank no MSI will be assigned to the VM.")
+      .widget(ConfigurationProperty.Widget.TEXT)
+      .required(false)
+      .hidden(true)
+      .build()),
+
+  USER_ASSIGNED_MSI_NAME(new SimpleConfigurationPropertyBuilder()
+      .configKey("userAssignedMsiName")
+      .name("The User Assigned MSI Name")
+      .defaultDescription("The User Assigned Managed Service Identity Name. If this and the User Assigned MSI " +
+          "Resource Group field is left blank no MSI will be assigned to the VM.")
+      .widget(ConfigurationProperty.Widget.TEXT)
+      .required(false)
+      .hidden(true)
+      .build()),
+
   USE_IMPLICIT_MSI(new SimpleConfigurationPropertyBuilder()
       .configKey("useImplicitMsi")
       .name("Use Implicit MSI")
@@ -272,6 +305,19 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
       .name("Name of AAD group for implicit MSI to join.")
       .defaultDescription("The name of the AAD group for implicit MSI to join.")
       .widget(ConfigurationProperty.Widget.TEXT)
+      .required(false)
+      .hidden(true)
+      .build()),
+
+  WITH_STATIC_PRIVATE_IP_ADDRESS(new SimpleConfigurationPropertyBuilder()
+      .configKey("withStaticPrivateIpAddress")
+      .name("With Static Private IP Address")
+      .defaultDescription("Whether or not to set the Private IP Address to static.")
+      .addValidValues(
+          "Yes",
+          "No")
+      .defaultValue("Yes")
+      .widget(ConfigurationProperty.Widget.LIST)
       .required(false)
       .hidden(true)
       .build());

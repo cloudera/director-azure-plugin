@@ -412,42 +412,6 @@ public class AzurePluginConfigHelperTest {
   }
 
   @Test
-  public void validateSupportedInstancesWithDefaultConfigExpectNoExceptionThrown() throws Exception {
-    Config config = AzurePluginConfigHelper
-        .parseConfigFromClasspath(Configurations.AZURE_CONFIG_FILENAME)
-        .getConfig(Configurations.AZURE_CONFIG_INSTANCE);
-
-    AzurePluginConfigHelper.validateSupportedInstances(config);
-  }
-
-  @Test
-  public void validateSupportedInstancesWithMissingFieldExpectExceptionThrown() throws Exception {
-    Config config = ConfigFactory.parseMap(new HashMap<String, Object>());
-
-    thrown.expect(ConfigException.class);
-    thrown.expectMessage(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED);
-    AzurePluginConfigHelper.validateSupportedInstances(config);
-  }
-
-  @Test
-  public void validateSupportedInstancesWithNotListExpectExceptionThrown() throws Exception {
-    Config config = buildConfigWith(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED, null);
-
-    thrown.expect(ConfigException.class);
-    thrown.expectMessage(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED);
-    AzurePluginConfigHelper.validateSupportedInstances(config);
-  }
-
-  @Test
-  public void validateSupportedInstancesWithEmptyListExpectExceptionThrown() throws Exception {
-    Config config = buildConfigWith(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED,
-        new ArrayList<String>());
-
-    thrown.expect(IllegalArgumentException.class);
-    AzurePluginConfigHelper.validateSupportedInstances(config);
-  }
-
-  @Test
   public void validateStorageAccountTypeWithDefaultExpectNoExceptionThrown() throws Exception {
     Config config = AzurePluginConfigHelper
         .parseConfigFromClasspath(Configurations.AZURE_CONFIG_FILENAME)

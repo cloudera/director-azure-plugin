@@ -29,6 +29,7 @@ import com.cloudera.director.spi.v1.model.InstanceTemplate;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
 import com.cloudera.director.spi.v1.model.exception.ValidationException;
+import com.google.common.collect.Sets;
 import com.microsoft.azure.CloudException;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.AvailabilitySet;
@@ -38,6 +39,8 @@ import com.microsoft.azure.management.compute.VirtualMachineCustomImage;
 import com.microsoft.azure.management.compute.VirtualMachineSize;
 import com.microsoft.azure.management.graphrbac.ActiveDirectoryGroup;
 import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
+import com.microsoft.azure.management.msi.Identity;
+import com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.microsoft.azure.management.network.Network;
 import com.microsoft.azure.management.storage.SkuName;
 
@@ -48,6 +51,7 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -97,7 +101,6 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     final String genericErrorMsg = "Error occurred during validating: %s";
 
     // Checks that don't reach out to the Azure backend.
-    checkVMSize(directorConfig, accumulator, localizationContext);
     checkFQDNSuffix(directorConfig, accumulator, localizationContext);
     checkInstancePrefix(directorConfig, accumulator, localizationContext);
     checkStorage(directorConfig, accumulator, localizationContext);
@@ -116,38 +119,13 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       checkAvailabilitySetAndManagedDisks(directorConfig, accumulator, localizationContext, azure);
       checkVmImage(directorConfig, accumulator, localizationContext, azure);
       checkUseCustomImage(directorConfig, accumulator, localizationContext, azure);
+      checkUserAssignedMsi(directorConfig, accumulator, localizationContext);
       checkImplicitMsiGroupName(directorConfig, accumulator, localizationContext);
     } catch (Exception e) {
       LOG.debug(genericErrorMsg, e);
       // use null key to indicate generic error
       ConfigurationPropertyToken token = null;
       addError(accumulator, token, localizationContext, null, genericErrorMsg, e);
-    }
-  }
-
-  /**
-   * Checks to make sure VM size (type) is supported.
-   *
-   * @param directorConfig Director config
-   * @param accumulator error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkVMSize(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
-      LocalizationContext localizationContext) {
-    final String virtualMachineMsg = "Virtual Machine '%s' is not supported. For the latest " +
-        "supported Virtual Machines consult the Cloudera Director documentation or Cloudera " +
-        "support for details on updating the Cloudera Director Azure plugin configuration, or to " +
-        "upgrade to the latest version of Cloudera Director.";
-
-    String vmSize = directorConfig.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, localizationContext);
-
-    if (!AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
-        .getStringList(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED)
-        .contains(vmSize)) {
-      LOG.debug(String.format(virtualMachineMsg, vmSize));
-      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
-          localizationContext, null, virtualMachineMsg, vmSize);
     }
   }
 
@@ -254,12 +232,8 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         "Storage Account Type. Valid types: '%s'";
     final String unsupportedStorageAccountTypesMsg = "Storage Account Type '%s' is not " +
         "supported. Supported types: %s.";
-    final String premiumDiskSizeMissingInConfigMsg = "Premium disk size '%s' is not supported. " +
-        "Supported sizes: %s.";
-    final String standardDiskSizeLessThanMinMsg = "Disk size '%s' is invalid. It must be greater " +
-        "than 0.";
-    final String standardDiskSizeGreaterThanMaxMsg = "Disk size '%s' is invalid. It must be less " +
-        "than or equal to %s.";
+    final String diskSizeLessThanMinMsg = "Disk size %s is invalid. It must be greater than 0.";
+    final String diskSizeGreaterThanMaxMsg = "Disk size %s is invalid. It must be less than or equal to %s.";
     final String noDiskValidationsMsg = "Disk size is not validated for storage type '%s'.";
 
     // first validate the storage account type
@@ -303,45 +277,25 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     String diskSize = directorConfig.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE, localizationContext);
 
-    if (storageAccountType.equals(SkuName.PREMIUM_LRS.toString())) {
-      // No min / max validations are done to accommodate future increases in Azure Premium disk
-      // sizes. All someone needs to do is include the disk size they want in azure-plugin.conf and
-      // they will pass validations. If the values used falls outside Azure limitations then the
-      // VM(s) will not be provisioned and a ServiceException and message will be in Director logs.
-
-      // validate that the disk size exists in azure-plugin.conf
-      if (!AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
-          .getStringList(Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)
-          .contains(diskSize)) {
-        LOG.debug(String.format(premiumDiskSizeMissingInConfigMsg, diskSize,
-            AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
-                .getStringList(Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES)));
-        addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
-            localizationContext, null, premiumDiskSizeMissingInConfigMsg, diskSize,
-            AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
-                .getStringList(Configurations.AZURE_CONFIG_INSTANCE_PREMIUM_DISK_SIZES));
-      }
-    } else if (storageAccountType.equals(SkuName.STANDARD_LRS.toString())) {
-      // The min is 1GB, the max is currently 4095 configurable by changing azure-plugin.conf. If
-      // the value used falls outside Azure limitations then the VM(s) will not be provisioned and a
-      // ServiceException and message will be in Director logs.
-
-      // validate that the disk size is between 1 and the max value inclusive
+    if (storageAccountType.equals(SkuName.PREMIUM_LRS.toString()) ||
+        storageAccountType.equals(SkuName.STANDARD_LRS.toString())) {
       int diskSizeGB = Integer.parseInt(diskSize);
       if (diskSizeGB < 1) {
-        LOG.debug(String.format(standardDiskSizeLessThanMinMsg, diskSize));
+        LOG.debug(String.format(diskSizeLessThanMinMsg, diskSize));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
-            localizationContext, null, standardDiskSizeLessThanMinMsg, diskSize);
-      } else if (diskSizeGB > Integer.parseInt(
-          AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
-              .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE))) {
-        LOG.debug(String.format(standardDiskSizeGreaterThanMaxMsg, diskSize,
+            localizationContext, null, diskSizeLessThanMinMsg, diskSize);
+      } else if (diskSizeGB > Integer.parseInt(AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
+          .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_DISK_SIZE))) {
+        // The min is 1GB, the max is currently 4095 configurable by changing azure-plugin.conf. If
+        // the value used falls outside Azure limitations then the VM(s) will not be provisioned and a
+        // ServiceException and message will be in Director logs.
+        LOG.debug(String.format(diskSizeGreaterThanMaxMsg, diskSize,
             AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
-                .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE)));
+                .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_DISK_SIZE)));
         addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
-            localizationContext, null, standardDiskSizeGreaterThanMaxMsg, diskSize,
+            localizationContext, null, diskSizeGreaterThanMaxMsg, diskSize,
             AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
-                .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_STANDARD_DISK_SIZE));
+                .getString(Configurations.AZURE_CONFIG_INSTANCE_MAXIMUM_DISK_SIZE));
       }
     } else {
       // if it's not part of the default list don't do any size validations
@@ -605,34 +559,28 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       LOG.debug(String.format(availabilitySetNotInRegionMsg, asName, region));
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
           localizationContext, null, availabilitySetNotInRegionMsg, asName, region);
+      return;
     }
 
-    // Check that the AS supports the family of VM being created
-    String vmSize = directorConfig
-        .getConfigurationValue(
-            AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, localizationContext)
-        .toUpperCase();
-    // Normalize the Azure-supported list of VM Sizes (pulled from Azure backend)
-    Set<String> azureSupportedVmSizes = new HashSet<>();
-    for (VirtualMachineSize supportedVMSize : as.listVirtualMachineSizes()) {
-      azureSupportedVmSizes.add(supportedVMSize.name().toUpperCase());
-    }
+    boolean passesVmSizeRegionCheck =
+        checkVMSizeForRegion(directorConfig, accumulator, localizationContext, azure);
 
-    if (!azureSupportedVmSizes.contains(vmSize)) {
-      // Normalize the Cloudera-supported list, used in the error message
-      Set<String> clouderaSupportedVMSizes = new HashSet<>();
-      for (String vm : AzurePluginConfigHelper.getAzurePluginConfigInstanceSection()
-          .getStringList(Configurations.AZURE_CONFIG_INSTANCE_SUPPORTED)) {
-        clouderaSupportedVMSizes.add(vm.toUpperCase());
+    if (passesVmSizeRegionCheck) {
+      // Check that the AS supports the family of VM being created
+      String vmSize = directorConfig
+          .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, localizationContext)
+          .toUpperCase();
+      // Normalize the Azure-supported list of VM Sizes (pulled from Azure backend)
+      Set<String> azureSupportedVmSizes = new HashSet<>();
+      for (VirtualMachineSize supportedVMSize : as.listVirtualMachineSizes()) {
+        azureSupportedVmSizes.add(supportedVMSize.name().toUpperCase());
       }
-      // trim the list
-      clouderaSupportedVMSizes.retainAll(azureSupportedVmSizes);
 
-      LOG.debug(String.format(availabilitySetVmMismatchMsg, vmSize, asName,
-          clouderaSupportedVMSizes));
-      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
-          localizationContext, null, availabilitySetVmMismatchMsg, vmSize, asName,
-          clouderaSupportedVMSizes);
+      if (!azureSupportedVmSizes.contains(vmSize)) {
+        LOG.debug(String.format(availabilitySetVmMismatchMsg, vmSize, asName, azureSupportedVmSizes));
+        addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET,
+            localizationContext, null, availabilitySetVmMismatchMsg, vmSize, asName, azureSupportedVmSizes);
+      }
     }
 
     // Check that the AS and MD/SA choices are compatible
@@ -744,6 +692,46 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
   }
 
   /**
+   * Checks to make sure VM size (type) exists for the Azure region.
+   *
+   * Can't check with VirtualMachineSizeTypes.values() because it doesn't contain the full
+   * set of allowable VM sizes, so this must be done with a backend call.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   * @param azure the entry point for accessing resource management APIs in Azure
+   * @return whether validation was successful
+   */
+  boolean checkVMSizeForRegion(Configured directorConfig,
+                               PluginExceptionConditionAccumulator accumulator,
+                               LocalizationContext localizationContext, Azure azure) {
+    final String virtualMachineMsg = "Virtual Machine '%s' is not a valid Virtual Machine Size Type in " +
+        "region '%s'. Valid Virtual Machine Size Types: %s";
+
+    String vmSize = directorConfig
+        .getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, localizationContext);
+
+    boolean isSuccessful = true;
+
+    Set<String> allowableVmSizes = Sets.newHashSet();
+    for (VirtualMachineSize vmSizeForRegion :
+        azure.virtualMachines().sizes().listByRegion(region)) {
+      allowableVmSizes.add(vmSizeForRegion.name().toUpperCase());
+    }
+
+    if (!allowableVmSizes.contains(vmSize.toUpperCase())) {
+      LOG.debug(String.format(virtualMachineMsg, vmSize, allowableVmSizes, region));
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.VMSIZE,
+          localizationContext, null, virtualMachineMsg, vmSize, allowableVmSizes, region);
+      isSuccessful = false;
+    }
+
+    return isSuccessful;
+  }
+
+
+  /**
    * Checks to see if Managed Disk option is on when user chooses to use custom image and validate
    * the image itself (existence & location).
    *
@@ -822,6 +810,63 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       addError(accumulator,
           AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_IMAGE_PLAN,
           localizationContext, null, e.getMessage());
+    }
+  }
+
+  void checkUserAssignedMsi(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
+      LocalizationContext localizationContext) {
+    final String userAssignedMsiRg = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP,
+        localizationContext);
+    final String userAssignedMsiName = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME,
+        localizationContext);
+
+    final String uaMsiNameMissingMsg = "User Assigned MSI Name is not specified, but User Assigned MSI Resource " +
+        "Group is. Specify both to use User Assigned MSI or neither to not use MSI.";
+    final String uaMsiRgMissingMsg = "User Assigned MSI Resource Group is not specified, but User Assigned MSI Name " +
+        "is. Specify both to use User Assigned MSI or neither to not use MSI.";
+    final String uaMsiRgDoesNotExistMsg = "User Assigned MSI Resource Group '" + userAssignedMsiRg + "' does not " +
+        "exist. Create the Resource Group or use an existing one.";
+    final String uaMsiDoesNotExistMsg = "User Assigned MSI '" + userAssignedMsiName + "' does not exist in Resource " +
+        "Group '" + userAssignedMsiRg + "'. Create the User Assigned MSI or use an existing one.";
+
+    // if no MSI fields are set then short-circuit
+    if (StringUtils.isBlank(userAssignedMsiName) && StringUtils.isBlank(userAssignedMsiRg)) {
+      // short-circuit return
+      LOG.debug("Neither User Assigned MSI Name nor User Assigned MSI Resource Group are set, skip User Assigned MSI " +
+          "validation.");
+      return;
+    }
+
+    // at least one MSI field is set - error if only one is set
+    if (StringUtils.isBlank(userAssignedMsiName)) {
+      LOG.debug(uaMsiNameMissingMsg);
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME,
+          localizationContext, null, uaMsiNameMissingMsg);
+      return;
+    } else if (StringUtils.isBlank(userAssignedMsiRg)) {
+      LOG.debug(uaMsiRgMissingMsg);
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP,
+          localizationContext, null, uaMsiRgMissingMsg);
+      return;
+    }
+
+    // both MSI fields are set - validate them
+    // validate that the RG exists
+    if (!credentials.authenticate().resourceGroups().contain(userAssignedMsiRg)) {
+      LOG.debug(uaMsiRgDoesNotExistMsg);
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP,
+          localizationContext, null, uaMsiRgDoesNotExistMsg);
+      return;
+    }
+    // validate that the MSI exists in the RG
+    MSIManager msiManager = credentials.getMsiManager();
+    Identity identity = msiManager.identities().getByResourceGroup(userAssignedMsiRg, userAssignedMsiName);
+    if (identity == null) {
+      LOG.debug(uaMsiDoesNotExistMsg);
+      addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME,
+          localizationContext, null, uaMsiDoesNotExistMsg);
     }
   }
 

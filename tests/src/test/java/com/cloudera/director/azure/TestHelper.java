@@ -23,6 +23,7 @@ import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate
 import com.cloudera.director.azure.compute.provider.AzureComputeProviderConfigurationProperty;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.AvailabilitySetSkuTypes;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.SecurityRuleProtocol;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resources.fluentcore.arm.Region;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
@@ -64,8 +65,8 @@ public class TestHelper {
   public static final String LIVE_TEST_SUBSCRIPTION_ID =
       System.getProperty(AzureCredentialsConfiguration.SUBSCRIPTION_ID.unwrap().getConfigKey());
 
-  public static final String TEST_CENTOS_IMAGE_NAME = "cloudera-centos-67-latest";
-  public static final String TEST_RHEL_IMAGE_NAME = "redhat-rhel-67-latest";
+  public static final String TEST_CENTOS_IMAGE_NAME = "cloudera-centos-74-latest";
+  public static final String TEST_RHEL_IMAGE_NAME = "redhat-rhel-7-latest";
   public static final String TEST_VM_SIZE = "STANDARD_DS12_V2";
   public static final String TEST_DATA_DISK_SIZE = "512";
   public static final String TEST_AVAILABILITY_SET_MANAGED = "managedAS";
@@ -73,6 +74,8 @@ public class TestHelper {
   public static final String TEST_NETWORK_SECURITY_GROUP = "nsg";
   public static final String TEST_VIRTUAL_NETWORK = "vn";
   public static final String TEST_SUBNET = "default";
+  public static final String TEST_HOST_FQDN_SUFFIX = "cdh-cluster.internal";
+  public static final String TEST_USER_ASSIGNED_MSI_NAME = "ua-msi";
   public static final String TEST_AAD_GROUP_NAME =
       System.getProperty(LIVE_TEST_AAD_GROUP_NAME) !=
           null ? System.getProperty(LIVE_TEST_AAD_GROUP_NAME) : "testAadGroup";
@@ -99,6 +102,28 @@ public class TestHelper {
   public static boolean runImplicitMsiLiveTests() {
     String liveString = System.getProperty("test.azure.implicitMsiLive");
     return Boolean.parseBoolean(liveString);
+  }
+
+  /**
+   * @return true to run orphaned resource cleanup tests.
+   */
+  public static boolean runOrphanedResourceCleanup() {
+    String liveString = System.getProperty("test.azure.orphanedResourceCleanup");
+    return Boolean.parseBoolean(liveString);
+  }
+
+  /**
+   * @return tag name of the VM to be cleaned up
+   */
+  public static String resourceCleanupVmTagName() {
+    return System.getProperty("test.azure.resourceCleanupVmTagName");
+  }
+
+  /**
+   * @return tag value of the VM to be cleaned up
+   */
+  public static String resourceCleanupVmTagValue() {
+    return System.getProperty("test.azure.resourceCleanupVmTagValue");
   }
 
   /**
@@ -196,7 +221,7 @@ public class TestHelper {
     map.put(AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME.unwrap().getConfigKey(),
         "subnet");
     map.put(AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX.unwrap()
-        .getConfigKey(), "cdh-cluster.internal");
+        .getConfigKey(), TEST_HOST_FQDN_SUFFIX);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP
         .unwrap().getConfigKey(), "nsgRG");
     map.put(AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP.unwrap()
@@ -288,7 +313,8 @@ public class TestHelper {
         .getConfigKey(), "2");
     map.put(AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE.unwrap()
         .getConfigKey(), TEST_DATA_DISK_SIZE);
-
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.WITH_STATIC_PRIVATE_IP_ADDRESS.unwrap().getConfigKey(),
+        "Yes");
     return map;
   }
 
@@ -308,11 +334,13 @@ public class TestHelper {
    * - a managed Availability Set (configured for Managed Disks)
    * - an unmanaged Availability Set (configured for Storage Accounts)
    * - a Network Security Group
+   * - a User Assigned MSI
    *
-   * @param azure the entry point for accessing resource management APIs in Azure
+   * @param credentials to get the Azure and MSIManager objects used to interact with Azure
    */
-  public static void buildLiveTestEnvironment(Azure azure) {
+  public static void buildLiveTestEnvironment(AzureCredentials credentials) {
     LOG.info("buildLiveTestEnvironment");
+    Azure azure = credentials.authenticate();
 
     Region region = Region.findByLabelOrName(TEST_REGION) != null ?
         Region.findByLabelOrName(TEST_REGION) : Region.US_EAST;
@@ -390,8 +418,17 @@ public class TestHelper {
           .withSubnet("default", "10.1.0.0/24")
           .create();
 
+      // User Assigned MSI
+      LOG.info("Building User Assigned MSI {}", TEST_USER_ASSIGNED_MSI_NAME);
+      MSIManager msiManager = credentials.getMsiManager();
+      msiManager.identities()
+          .define(TEST_USER_ASSIGNED_MSI_NAME)
+          .withRegion(region)
+          .withNewResourceGroup(TEST_RESOURCE_GROUP)
+          .create();
+
     } catch (Exception e) {
-      LOG.error("Unable to build the resource group {} and all test assets; cleaning up. Error: ",
+      LOG.error("Unable to build the resource group {} and all test assets; cleaning up. Error: {}",
           TEST_RESOURCE_GROUP, e.getMessage());
 
       destroyLiveTestEnvironment(azure);

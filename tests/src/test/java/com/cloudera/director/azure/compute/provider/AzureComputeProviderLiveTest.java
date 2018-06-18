@@ -27,12 +27,16 @@ import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.ResourceIdentityType;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineDataDisk;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.ActiveDirectoryObject;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.ServicePrincipal;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.IPAllocationMethod;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.SkuName;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.InstanceStatus;
+import com.cloudera.director.spi.v1.model.InstanceTemplate;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
@@ -47,10 +51,12 @@ import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 import org.junit.After;
 import org.junit.AfterClass;
@@ -107,7 +113,7 @@ public class AzureComputeProviderLiveTest {
     // initialize everything only if live check passes
     credentials = TestHelper.getAzureCredentials();
     azure = credentials.authenticate();
-    TestHelper.buildLiveTestEnvironment(azure);
+    TestHelper.buildLiveTestEnvironment(credentials);
   }
 
   @After
@@ -137,30 +143,67 @@ public class AzureComputeProviderLiveTest {
    */
   @Test
   public void fullCycle() throws Exception {
-    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, false, null);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, false, null, false, true);
+  }
+
+  /**
+   * The full cycle test with User Assigned MSI
+   *
+   * @throws Exception
+   */
+  @Test
+  public void fullCycleWithUserAssignedMsi() throws Exception {
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, false, null, true, true);
+  }
+
+  @Test
+  public void fullCycleDynamicPrivateIpAddress() throws Exception {
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, false, null, false, false);
+  }
+
+  /**
+   * The unmanaged version of the basic pre-commit full cycle sanity live test. Similar to the other fullCycle tests but
+   * left standalone for ease of remembering which test to run before committing.
+   *
+   * @throws Exception
+   */
+  @Test
+  public void fullCycleUnmanaged() throws Exception {
+    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, false, null,
+        false, true);
+  }
+
+  @Test
+  public void fullCycleWithValidRandomlyGeneratedStorageSizeExpectSuccess() throws Exception {
+    LOG.info("fullCycleWithValidRandomlyGeneratedStorageSizeExpectSuccess");
+    // Managed Disks of random size between between 1 and 4095, inclusive
+    String randomSize = Integer.toString(ThreadLocalRandom.current().nextInt(1, 4095 + 1));
+    LOG.info("Using the randomly generated sized storage of {}.", randomSize);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), randomSize, 1, false, false, null, false, true);
+    fullCycleHelper(true, SkuName.STANDARD_LRS.toString(), randomSize, 1, false, false, null, false, true);
   }
 
   @Test
   public void fullCycleWithValidStorageExpectSuccess() throws Exception {
     // Managed Disks + Premium Storage
-    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "4095", 1, false, false, null);
-    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "2048", 1, false, false, null);
-    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "1024", 1, false, false, null);
-    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "1023", 1, false, false, null);
-    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "512", 1, false, false, null);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "4095", 1, false, false, null, false, true);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "2048", 1, false, false, null, false, true);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "1024", 1, false, false, null, false, true);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "1023", 1, false, false, null, false, true);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "512", 1, false, false, null, false, true);
 
     // Storage Accounts + Premium Storage
-    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "4095", 1, false, false, null);
-    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "2048", 1, false, false, null);
-    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "1024", 1, false, false, null);
-    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "1023", 1, false, false, null);
-    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "512", 1, false, false, null);
+    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "4095", 1, false, false, null, false, true);
+    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "2048", 1, false, false, null, false, true);
+    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "1024", 1, false, false, null, false, true);
+    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "1023", 1, false, false, null, false, true);
+    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "512", 1, false, false, null, false, true);
 
     // Managed Disks + Standard Storage
-    fullCycleHelper(true, SkuName.STANDARD_LRS.toString(), "4095", 1, false, false, null);
+    fullCycleHelper(true, SkuName.STANDARD_LRS.toString(), "4095", 1, false, false, null, false, true);
 
     // Storage Accounts + Standard Storage
-    fullCycleHelper(false, SkuName.STANDARD_LRS.toString(), "4095", 1, false, false, null);
+    fullCycleHelper(false, SkuName.STANDARD_LRS.toString(), "4095", 1, false, false, null, false, true);
   }
 
   @Test
@@ -168,7 +211,7 @@ public class AzureComputeProviderLiveTest {
     // Managed Disks + Premium Storage
     boolean mdpsExceptionThrown = false;
     try {
-      fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "4096", 1, false, false, null);
+      fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), "4096", 1, false, false, null, false, true);
     } catch (UnrecoverableProviderException e) {
       mdpsExceptionThrown = true;
     }
@@ -176,7 +219,7 @@ public class AzureComputeProviderLiveTest {
     // Storage Accounts + Premium Storage
     boolean sapsExceptionThrown = false;
     try {
-      fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "4096", 1, false, false, null);
+      fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), "4096", 1, false, false, null, false, true);
     } catch (UnrecoverableProviderException e) {
       sapsExceptionThrown = true;
     }
@@ -184,7 +227,7 @@ public class AzureComputeProviderLiveTest {
     // Managed Disks + Standard Storage
     boolean mdssExceptionThrown = false;
     try {
-      fullCycleHelper(true, SkuName.STANDARD_LRS.toString(), "4096", 1, false, false, null);
+      fullCycleHelper(true, SkuName.STANDARD_LRS.toString(), "4096", 1, false, false, null, false, true);
     } catch (UnrecoverableProviderException e) {
       mdssExceptionThrown = true;
     }
@@ -192,7 +235,7 @@ public class AzureComputeProviderLiveTest {
     // Storage Accounts + Standard Storage
     boolean sassExceptionThrown = false;
     try {
-      fullCycleHelper(false, SkuName.STANDARD_LRS.toString(), "4096", 1, false, false, null);
+      fullCycleHelper(false, SkuName.STANDARD_LRS.toString(), "4096", 1, false, false, null, false, true);
     } catch (UnrecoverableProviderException e) {
       sassExceptionThrown = true;
     }
@@ -207,16 +250,16 @@ public class AzureComputeProviderLiveTest {
   @Test
   public void fullCycleWithoutAvailabilitySetExpectSuccess() throws Exception {
     // Managed Disks + null AS
-    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, true, false, null);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, true, false, null, false, true);
 
     // Storage Accounts + null AS
-    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, true, false, null);
+    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, true, false, null, false, true);
 
     // Managed Disks + "" (empty string) AS
-    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, true, null);
+    fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, true, null, false, true);
 
     // Storage Accounts + "" (empty string) AS
-    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, true, null);
+    fullCycleHelper(false, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 3, false, true, null, false, true);
   }
 
   @Test
@@ -227,26 +270,26 @@ public class AzureComputeProviderLiveTest {
 
     // with Managed Disks
     for (String type : Configurations.DEPRECATED_STORAGE_ACCOUNT_TYPES.keySet()) {
-      fullCycleHelper(true, type, TestHelper.TEST_DATA_DISK_SIZE, 1, false, false, null);
+      fullCycleHelper(true, type, TestHelper.TEST_DATA_DISK_SIZE, 1, false, false, null, false, true);
     }
 
     // with Storage Accounts
     for (String type : Configurations.DEPRECATED_STORAGE_ACCOUNT_TYPES.keySet()) {
-      fullCycleHelper(false, type, TestHelper.TEST_DATA_DISK_SIZE, 1, false, false, null);
+      fullCycleHelper(false, type, TestHelper.TEST_DATA_DISK_SIZE, 1, false, false, null, false, true);
     }
   }
 
   @Test
   public void fullCycleWithVmImageOneLineExpectSuccess() throws Exception {
     fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 1, false, false,
-        "/publisher/cloudera/offer/cloudera-centos-os/sku/7_2/version/latest");
+        "/publisher/cloudera/offer/cloudera-centos-os/sku/7_2/version/latest", false, true);
   }
 
   @Test
   public void fullCycleWithPreviewVmImageOneLineExpectSuccess() throws Exception {
     // N.b. this test will only pass in subscriptions that have access to the staged image
     fullCycleHelper(true, SkuName.PREMIUM_LRS.toString(), TestHelper.TEST_DATA_DISK_SIZE, 1, false, false,
-        "/publisher/cloudera/offer/cloudera-centos-os-preview/sku/7_2/version/latest");
+        "/publisher/cloudera/offer/cloudera-centos-os-preview/sku/7_2/version/latest", false, true);
   }
 
   /**
@@ -263,7 +306,8 @@ public class AzureComputeProviderLiveTest {
    * @throws Exception
    */
   private void fullCycleHelper(boolean managed, String storageAccountType, String dataDiskSize, int numberOfVms,
-      boolean withNullAvailabilitySet, boolean withEmptyStringAvailabilitySet, String withOneLineImage)
+      boolean withNullAvailabilitySet, boolean withEmptyStringAvailabilitySet, String withOneLineImage,
+      boolean withUserAssignedMsi, boolean withStaticPrivateIpAddress)
       throws Exception {
     // 0. set up
     LOG.info("0. set up");
@@ -303,6 +347,19 @@ public class AzureComputeProviderLiveTest {
       map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(), withOneLineImage);
     }
 
+    if (withUserAssignedMsi) {
+      map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
+          TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
+      map.put(
+          AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
+          TestHelper.TEST_RESOURCE_GROUP);
+    }
+
+    if (!withStaticPrivateIpAddress) {
+      map.put(AzureComputeInstanceTemplateConfigurationProperty.WITH_STATIC_PRIVATE_IP_ADDRESS.unwrap().getConfigKey(),
+          "No");
+    }
+
     Launcher launcher = new AzureLauncher();
     launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
     CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
@@ -329,18 +386,71 @@ public class AzureComputeProviderLiveTest {
     Collection<AzureComputeInstance> foundInstances = provider.find(template, instanceIds);
     Assert.assertEquals(instanceIds.size(), foundInstances.size());
 
-    // Storage Account specific checks
-    if (!managed) {
-      // verify that the first 3 characters of the Storage Account name match up with the instanceId
-      for (AzureComputeInstance instance : foundInstances) {
-        String storageAccountPrefix = AzureComputeProvider
-            .getStorageAccountNameFromVM(instance.getInstanceDetails()).substring(0, 3);
+    // check private fqdn
+    for (AzureComputeInstance instance : foundInstances) {
+      String privateFqdn = instance.getProperties().get(AzureComputeInstance
+          .AzureComputeInstanceDisplayPropertyToken.PRIVATE_FQDN.unwrap().getDisplayKey());
+      Assert.assertTrue(privateFqdn.contains(TestHelper.TEST_HOST_FQDN_SUFFIX));
+    }
+
+    // Managed Disks and Storage Account checks
+    String expectedStorageAccountType = Configurations.convertStorageAccountTypeString(storageAccountType);
+    for (AzureComputeInstance instance : foundInstances) {
+      if (managed) {
+        // verify that the OS disk has the correct Storage Account Type (e.g. standard / premium)
+        String actualStorageAccountType = instance.getInstanceDetails().osDiskStorageAccountType().toString();
+        Assert.assertEquals(expectedStorageAccountType, actualStorageAccountType);
+
+        // verify that the data disks have the correct Storage Account Type
+        for (VirtualMachineDataDisk dataDisk : instance.getInstanceDetails().dataDisks().values()) {
+          actualStorageAccountType = dataDisk.storageAccountType().toString();
+          Assert.assertEquals(expectedStorageAccountType, actualStorageAccountType);
+        }
+      } else {
+        // verify that the Storage Account has the correct Storage Account Type (e.g. standard / premium)
+        String saName = AzureComputeProvider.getStorageAccountNameFromVM(instance.getInstanceDetails());
+        String rgName = map.get(
+            AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP.unwrap().getConfigKey());
+        String actualStorageAccountType = azure.storageAccounts().getByResourceGroup(rgName, saName).sku().name()
+            .toString();
+        Assert.assertEquals(expectedStorageAccountType, actualStorageAccountType);
+
+        // verify that the first 3 characters of the Storage Account name match up with the instanceId
+        String storageAccountPrefix = saName.substring(0, 3);
         String instanceId = instance.getProperties().get(AzureComputeInstance
             .AzureComputeInstanceDisplayPropertyToken.INSTANCE_ID.unwrap().getDisplayKey());
         String instanceIdPrefix =
             instanceId.substring(instanceId.length() - 36, instanceId.length()).substring(0, 3);
-
         Assert.assertTrue(storageAccountPrefix.equals(instanceIdPrefix));
+      }
+    }
+
+    // Private IP Address checks
+    for (AzureComputeInstance instance : foundInstances) {
+      IPAllocationMethod privateIPAllocationMethod =
+          instance.getInstanceDetails().getPrimaryNetworkInterface().primaryIPConfiguration().inner().privateIPAllocationMethod();
+      if (withStaticPrivateIpAddress) {
+        Assert.assertTrue(privateIPAllocationMethod.equals(IPAllocationMethod.STATIC));
+      } else {
+        Assert.assertTrue(privateIPAllocationMethod.equals(IPAllocationMethod.DYNAMIC));
+      }
+    }
+
+    // User Assigned MSI checks
+    if (withUserAssignedMsi) {
+      for (AzureComputeInstance instance : foundInstances) {
+        Assert.assertTrue(instance.getInstanceDetails().isManagedServiceIdentityEnabled());
+        Assert.assertTrue(
+            instance.getInstanceDetails().managedServiceIdentityType().equals(ResourceIdentityType.USER_ASSIGNED));
+        Assert.assertTrue(!instance.getInstanceDetails().userAssignedManagedServiceIdentityIds().isEmpty());
+
+        boolean containsMsi = false;
+        for (String i : instance.getInstanceDetails().userAssignedManagedServiceIdentityIds()) {
+          if (i.contains(TestHelper.TEST_USER_ASSIGNED_MSI_NAME)) {
+            containsMsi = true;
+          }
+        }
+        Assert.assertTrue(containsMsi);
       }
     }
 
@@ -386,7 +496,7 @@ public class AzureComputeProviderLiveTest {
   }
 
   @Test
-  public void findWithAzureErrorInvalidCredentialsReturnsEmptyList() throws Exception {
+  public void findWithAzureErrorInvalidCredentialsThrows() throws Exception {
     LOG.info("findWithAzureErrorInvalidCredentialsReturnsEmptyList");
 
     Collection<String> instanceIds = new ArrayList<>();
@@ -414,7 +524,67 @@ public class AzureComputeProviderLiveTest {
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
         TestHelper.buildValidDirectorLiveTestConfig(), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
 
-    Assert.assertEquals(0, provider.find(template, instanceIds).size());
+    try {
+      provider.find(template, instanceIds);
+      Assert.fail("find is expected to fail");
+    } catch (Exception expected) {
+    }
+  }
+
+  @Test
+  public void findWithPartiallyDeletedVirtualMachine() throws Exception {
+    LOG.info("findWithPartiallyDeletedVirtualMachine");
+
+    // 0. set up
+    LOG.info("0. set up");
+    Launcher launcher = new AzureLauncher();
+    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
+    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+        TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
+    AzureComputeProvider provider = (AzureComputeProvider) cloudProvider.createResourceProvider(
+        AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig());
+    AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
+        TestHelper.buildValidDirectorLiveTestConfig(), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+
+    // the one VM to use for this test
+    Collection<String> instanceIds = new ArrayList<>();
+    instanceIds.add(UUID.randomUUID().toString());
+
+    // 1. allocate the VM the first time
+    LOG.info("1. allocate");
+    provider.allocate(template, instanceIds, instanceIds.size());
+
+    // 2. verify that the instance can be found
+    LOG.info("2. find");
+    Collection<AzureComputeInstance> foundInstances = provider.find(template, instanceIds);
+    Assert.assertEquals(instanceIds.size(), foundInstances.size());
+
+    // 3. verify that the instance is in the RUNNING state
+    LOG.info("3. getInstanceState");
+    Map<String, InstanceState> instanceStates = provider.getInstanceState(template, instanceIds);
+    Assert.assertEquals(instanceIds.size(), instanceStates.size());
+    for (String instance : instanceIds) {
+      Assert.assertEquals(InstanceStatus.RUNNING, instanceStates.get(instance).getInstanceStatus());
+    }
+
+    // 4. find and getInstanceState with partially deleted vm
+    LOG.info("4. find and getInstanceState again with partially deleted vm");
+    AzureComputeInstance toDelete = foundInstances.iterator().next();
+    azure.virtualMachines().deleteById(toDelete.unwrap().id());
+
+    Collection<AzureComputeInstance> actual = provider
+        .find(template, Collections.singletonList(toDelete.getId()));
+    Assert.assertEquals(1, actual.size());
+    Assert.assertNull(actual.iterator().next().unwrap());
+
+    Map<String, InstanceState> actualState = provider
+        .getInstanceState(template, Collections.singletonList(toDelete.getId()));
+    Assert.assertEquals(1, actualState.size());
+    Assert.assertEquals(InstanceStatus.FAILED, actualState.get(toDelete.getId()).getInstanceStatus());
+
+    // 5. delete
+    LOG.info("5. delete");
+    provider.delete(template, instanceIds);
   }
 
   @Test
@@ -604,7 +774,7 @@ public class AzureComputeProviderLiveTest {
 
     // 4. find to verify that all instances were correctly deleted
     LOG.info("3. find");
-    Assert.assertEquals(0, provider.find(template, instanceIds).size());
+    Assert.assertEquals(0, provider.find(templateNoPublicIp, instanceIds).size());
 
     // 5. verify the public IP still exists
     Assert.assertNotNull(azure.publicIPAddresses().getById(publicIpId));
@@ -615,6 +785,216 @@ public class AzureComputeProviderLiveTest {
     // 7. cleanup: verify the public IP was deleted
     Assert.assertNull(azure.publicIPAddresses().getById(publicIpId));
   }
+
+  /**
+   * Verifies that find(), getInstanceState, and delete() work when the VM and some of it's resources are already
+   * deleted by doing the following:
+   * - allocate 3x Virtual Machines with Managed Disks, Network Interfaces, and Public IPs
+   * - manually delete all Virtual Machines and then follow this truth table for deleting one of either their attached
+   *   Storage, Network Interfaces or Public IPs.
+   *   Columns are: delete Storage | delete Network Interface | delete Public IP
+   *     VM with MD 1: y n n
+   *     VM with MD 2: n y n
+   *     VM with MD 3: n n y
+   * -  delete the VMs by calling delete()
+   * -  verify that everything was deleted; if not call delete again and repeat up to 3 times
+   *
+   * @throws Exception
+   */
+  @Test
+  public void fullCycleManagedIsRetryable()
+      throws Exception {
+    LOG.info("fullCycleManagedIsRetryable");
+    retryableHelper(true);
+  }
+
+  /**
+   * Verifies that find(), getInstanceState(), and delete() work when the VM and some of it's resources are already
+   * deleted by doing the following:
+   * - allocate 3x Virtual Machines with Storage Accounts, Network Interfaces, and Public IPs
+   * - manually delete all Virtual Machines and then follow this truth table for deleting one of either their attached
+   *   Storage, Network Interfaces or Public IPs.
+   *   Columns are: delete Storage | delete Network Interface | delete Public IP
+   *     VM with MD 1: y n n
+   *     VM with MD 2: n y n
+   *     VM with MD 3: n n y
+
+   * -  delete the VMs by calling delete()
+   * -  verify that everything was deleted; if not call delete again and repeat up to 3 times
+   *
+   * @throws Exception
+   */
+  @Test
+  public void fullCycleUnmanagedIsRetryable()
+      throws Exception {
+    LOG.info("fullCycleUnmanagedIsRetryable");
+    retryableHelper(false);
+  }
+
+  private void retryableHelper(boolean managed) throws Exception {
+    // 0. set up
+    LOG.info("0. set up");
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE.unwrap().getConfigKey(),
+        TestHelper.TEST_DATA_DISK_SIZE);
+    if (managed) {
+      map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(), "Yes");
+    } else {
+      map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(), "No");
+    }
+    map.remove(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET.unwrap().getConfigKey());
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE.unwrap().getConfigKey(),
+        SkuName.STANDARD_LRS.toString());
+
+    Launcher launcher = new AzureLauncher();
+    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
+    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+        new SimpleConfiguration(map), Locale.getDefault());
+    AzureComputeProvider provider = (AzureComputeProvider) cloudProvider.createResourceProvider(
+        AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig());
+    AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
+        new SimpleConfiguration(map), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+
+    // the three VMs to use for this test
+    Collection<String> instanceIds = new ArrayList<>();
+    for (int i = 0; i < 3; i++) {
+      instanceIds.add(UUID.randomUUID().toString());
+    }
+    LOG.info("Using these UUIDs: {}", Arrays.toString(instanceIds.toArray()));
+
+    // 1. allocate
+    LOG.info("1. allocate");
+    provider.allocate(template, instanceIds, instanceIds.size());
+
+    // 2. find
+    // verify that all instances can be found
+    LOG.info("2. find");
+    Collection<AzureComputeInstance> foundInstances = provider.find(template, instanceIds);
+    Assert.assertEquals(instanceIds.size(), foundInstances.size());
+
+    // 3. getInstanceState
+    // verify that all instances are in the RUNNING state
+    LOG.info("3. getInstanceState");
+    // get the instanceIds from the previous find() call
+    Collection<String> foundInstanceIds = new ArrayList<>();
+    for (AzureComputeInstance instance : foundInstances) {
+      foundInstanceIds.add(instance.getId());
+    }
+    Map<String, InstanceState> instanceStates = provider.getInstanceState(template, foundInstanceIds);
+    Assert.assertEquals(instanceIds.size(), instanceStates.size());
+    for (String instance : instanceIds) {
+      Assert.assertEquals(InstanceStatus.RUNNING, instanceStates.get(instance).getInstanceStatus());
+    }
+
+    // 4. manually delete all the Virtual Machines only
+    LOG.info("4. manually delete the virtual machines only (takes a few minutes)");
+    String rgName =
+        map.get(AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP.unwrap().getConfigKey());
+    String prefix = map.get(
+        InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX.unwrap().getConfigKey());
+
+    for (String id : instanceIds) {
+      azure.virtualMachines().deleteByResourceGroup(rgName, AzureComputeProvider.getVmName(id, prefix));
+    }
+
+    // 5. manually delete the rest of the resources following the truth table in this method's javadocs
+    LOG.info("5. manually delete other resources following the table");
+    int i = 0;
+    for (String id : instanceIds) {
+      // what to delete logic
+      boolean deleteStorage = i == 0;
+      boolean deleteNic = i == 1;
+      boolean deletePip = i == 2;
+      i += 1;
+
+      String commonResourceNamePrefix = AzureComputeProvider.getFirstGroupOfUuid(id);
+
+      // delete storage (if managed delete half of the disks)
+      if (deleteStorage) {
+        if (managed) {
+          azure.disks()
+              .deleteByResourceGroup(rgName, commonResourceNamePrefix + AzureComputeProvider.MANAGED_OS_DISK_SUFFIX);
+
+          int numberofManagedDisks = Integer.parseInt(
+              map.get(AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT.unwrap().getConfigKey()));
+          // leave one disk behind
+          for (int j = 0; i < numberofManagedDisks - 1; j += 1) {
+            azure.disks().deleteByResourceGroup(rgName, commonResourceNamePrefix + "-" + j);
+          }
+        } else {
+          azure.storageAccounts().deleteByResourceGroup(rgName, commonResourceNamePrefix);
+        }
+      }
+
+      // delete nic
+      if (deleteNic) {
+        azure.networkInterfaces().deleteByResourceGroup(rgName, commonResourceNamePrefix);
+      }
+
+      // delete pip (must delete the nic first)
+      if (deletePip) {
+        azure.networkInterfaces().deleteByResourceGroup(rgName, commonResourceNamePrefix);
+        azure.publicIPAddresses().deleteByResourceGroup(rgName, commonResourceNamePrefix);
+      }
+    }
+
+    // 6. find() with some resources missing - verify that all VMs can be found
+    LOG.info("6. find");
+    Collection<AzureComputeInstance> partiallyDeletedFoundInstances = provider.find(template, instanceIds);
+    Assert.assertEquals(instanceIds.size(), partiallyDeletedFoundInstances.size());
+
+    // 7. getInstanceState() with some resources missing - verify that all VMs are in the FAILED state
+    LOG.info("7. getInstanceState");
+    // get the instanceIds from the previous find() call
+    Collection<String> partiallyDeletedFoundInstanceIds = new ArrayList<>();
+    for (AzureComputeInstance instance : partiallyDeletedFoundInstances) {
+      partiallyDeletedFoundInstanceIds.add(instance.getId());
+    }
+    Map<String, InstanceState> partiallyDeletedInstanceStates =
+        provider.getInstanceState(template, partiallyDeletedFoundInstanceIds);
+    Assert.assertEquals(instanceIds.size(), partiallyDeletedInstanceStates.size());
+    for (String instanceId : instanceIds) {
+      LOG.info("Status for instance id {}: {}.",
+          instanceId, partiallyDeletedInstanceStates.get(instanceId).getInstanceStatus());
+      Assert.assertEquals(InstanceStatus.FAILED, partiallyDeletedInstanceStates.get(instanceId).getInstanceStatus());
+    }
+
+    // 8. delete() with some resources missing, up to 3 times
+    LOG.info("8. delete");
+    int attempt = 0;
+    int maxAttempts = 3;
+    while (attempt < maxAttempts) {
+      LOG.info("delete() attempt {} of {}.", attempt, maxAttempts);
+
+      // delete()
+      try {
+        provider.delete(template, instanceIds);
+      } catch (UnrecoverableProviderException e) {
+        LOG.error("delete() threw UnrecoverableProviderException number {}. Error: ", attempt, e);
+        attempt += 1;
+        continue;
+      } catch (Exception e) {
+        LOG.error("A generic exception was thrown when calling delete() (this should not happen). Error: ", e);
+        Assert.fail();
+        break;
+      }
+
+      // verify everything has been deleted
+      if (AzureComputeProviderLiveTestHelper.resourcesDeleted(azure, map, instanceIds)) {
+        break;
+      } else {
+        attempt += 1;
+      }
+    }
+
+    Assert.assertTrue(
+        String.format("delete() failed to delete all resources within %s tries.", maxAttempts),
+        attempt < maxAttempts);
+  }
+
+
+
 
   @Ignore
   @Test
@@ -931,7 +1311,7 @@ public class AzureComputeProviderLiveTest {
     LOG.info("3. verify implicit MSI");
     GraphRbacManager graphRbacManager = TestHelper.getAzureCredentials().getGraphRbacManager();
     AzureComputeInstance vmInstance = foundInstances.get(0);
-    String msiObjectId = vmInstance.getInstanceDetails().managedServiceIdentityPrincipalId();
+    String msiObjectId = vmInstance.getInstanceDetails().systemAssignedManagedServiceIdentityPrincipalId();
     if (useImplicitMsi) {
       ServicePrincipal msiObject = graphRbacManager.servicePrincipals().getById(msiObjectId);
       Assert.assertNotNull(msiObject);

@@ -61,6 +61,9 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
   private PluginExceptionConditionAccumulator accumulator;
   private LocalizationContext localizationContext;
 
+  private static final String VMSIZE = AzureComputeInstanceTemplateConfigurationProperty.VMSIZE
+      .unwrap().getConfigKey();
+
   @BeforeClass
   public static void createLiveTestResources() {
     Assume.assumeTrue(TestHelper.runLiveTests());
@@ -71,7 +74,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     // initialize everything after the live test check
     credentials = TestHelper.getAzureCredentials();
     azure = credentials.authenticate();
-    TestHelper.buildLiveTestEnvironment(azure);
+    TestHelper.buildLiveTestEnvironment(credentials);
   }
 
   @Before
@@ -342,7 +345,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     Map<String, Object> imagesMap = AzurePluginConfigHelper
         .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE).root().unwrapped();
     ((Map<String, Object>) imagesMap.get(TestHelper.TEST_CENTOS_IMAGE_NAME))
-        .put("version", "1.0.0");
+        .put("version", "2.0.7"); // 2.0.7 is the first version Cloudera published CentOS 7.4 with
     AzurePluginConfigHelper.setConfigurableImages(ConfigFactory.parseMap(imagesMap));
 
     validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
@@ -368,6 +371,23 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     validator.checkVmImage(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
     Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkVMSizeWithValidTemplateExpectNoError() throws Exception {
+    validator.checkVMSizeForRegion(TestHelper.buildValidDirectorUnitTestConfig(), accumulator,
+        localizationContext, azure);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkVMSizeWithInvalidTemplateExpectAccumulatesErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
+    map.put(VMSIZE, "invalid");
+
+    validator.checkVMSizeForRegion(new SimpleConfiguration(map), accumulator, localizationContext,
+        azure);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
   }
 
   @Test
@@ -533,6 +553,89 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     validator.checkUseCustomImage(new SimpleConfiguration(cfgMap), accumulator,
         localizationContext, azure);
 
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkUserAssignedMsiExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
+        TestHelper.TEST_RESOURCE_GROUP);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
+        TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
+
+    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  // just in case it becomes a default at some point to use MSI
+  @Test
+  public void checkUserAssignedMsiNoMsiExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.remove(
+        AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey());
+    map.remove(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey());
+
+    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkUserAssignedMsiNoMsiRgValueExpectErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.remove(
+        AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey());
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
+        TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
+
+    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkUserAssignedMsiNoMsiNameValueExpectErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
+        TestHelper.TEST_RESOURCE_GROUP);
+    map.remove(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey());
+
+    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkUserAssignedMsiFakeMsiRgExpectErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
+        "fake-user-assigned-msi-resource-group");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
+        TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
+
+    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkUserAssignedMsiFakeMsiNameExpectErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
+        TestHelper.TEST_RESOURCE_GROUP);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
+        "fake-user-assigned-name");
+
+    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkUserAssignedMsiFakeMsiNameAndFakeMsiRgExpectErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
+        "fake-user-assigned-msi-resource-group");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
+        "fake-user-assigned-name");
+
+    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
     Assert.assertEquals(1, accumulator.getConditionsByKey().size());
   }
 

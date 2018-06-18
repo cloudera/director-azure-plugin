@@ -40,6 +40,7 @@ import com.cloudera.director.spi.v1.model.util.SimpleResourceTemplate;
 import com.cloudera.director.spi.v1.provider.ResourceProviderMetadata;
 import com.cloudera.director.spi.v1.provider.util.SimpleResourceProviderMetadata;
 import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
+import com.google.common.annotations.VisibleForTesting;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.AvailabilitySet;
 import com.microsoft.azure.management.compute.CachingTypes;
@@ -51,14 +52,16 @@ import com.microsoft.azure.management.compute.PowerState;
 import com.microsoft.azure.management.compute.PurchasePlan;
 import com.microsoft.azure.management.compute.StorageAccountTypes;
 import com.microsoft.azure.management.compute.VirtualMachine;
-import com.microsoft.azure.management.compute.VirtualMachineDataDisk;
 import com.microsoft.azure.management.compute.VirtualMachineImage;
 import com.microsoft.azure.management.compute.VirtualMachineSizeTypes;
 import com.microsoft.azure.management.graphrbac.ActiveDirectoryGroup;
 import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
+import com.microsoft.azure.management.msi.Identity;
+import com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.microsoft.azure.management.network.Network;
 import com.microsoft.azure.management.network.NetworkInterface;
 import com.microsoft.azure.management.network.NetworkSecurityGroup;
+import com.microsoft.azure.management.network.NicIPConfiguration;
 import com.microsoft.azure.management.network.PublicIPAddress;
 import com.microsoft.azure.management.resources.fluentcore.arm.Region;
 import com.microsoft.azure.management.resources.fluentcore.arm.collection.SupportsDeletingByResourceGroup;
@@ -70,7 +73,6 @@ import com.microsoft.rest.ServiceCallback;
 import com.microsoft.rest.ServiceFuture;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -83,6 +85,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -125,7 +128,8 @@ public class AzureComputeProvider
 
   private final ConfigurationValidator computeInstanceTemplateConfigValidator;
 
-  private static final String MANAGED_OS_DISK_SUFFIX = "-OS";
+  @VisibleForTesting
+  static final String MANAGED_OS_DISK_SUFFIX = "-OS";
 
   private static final int POLLING_INTERVAL_SECONDS = 5;
 
@@ -305,6 +309,9 @@ public class AzureComputeProvider
     final String aadGroupName = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME,
         templateLocalizationContext);
+    final boolean withStaticPrivateIpAddress = template.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.WITH_STATIC_PRIVATE_IP_ADDRESS,
+        templateLocalizationContext).equals("Yes");
 
     // Include time for preparing VM create into total VM create time
     final StopWatch stopwatch = new StopWatch();
@@ -412,6 +419,25 @@ public class AzureComputeProvider
 
                   @Override
                   public void success(CreatedResources<VirtualMachine> result) {
+                    // set the nic's primary private IP to static - this has to be done after the nic is created
+                    if (withStaticPrivateIpAddress) {
+                      NetworkInterface ni = result.get(vmCreatable.key()).getPrimaryNetworkInterface();
+                      LOG.debug("Network Interface {}: setting private IP to static.", ni.id());
+                      try {
+                        NicIPConfiguration ipConfig = ni.primaryIPConfiguration();
+                        ni.update()
+                            .updateIPConfiguration(ipConfig.name())
+                            .withPrivateIPAddressStatic(ipConfig.privateIPAddress())
+                            .parent()
+                            .apply();
+                      } catch (Exception e) {
+                        LOG.error("Network Interface {}: failed to set private IP to static, marking VM as failed.",
+                            ni.id());
+                        return;
+                      }
+                      LOG.info("Network Interface {}: set private IP to static successfully.", ni.id());
+                    }
+
                     perVmStopWatch.stop();
                     LOG.info("Successfully created VM: {} in {} seconds.", vmName,
                         perVmStopWatch.getTime() / 1000);
@@ -426,8 +452,7 @@ public class AzureComputeProvider
                             graphRbacManager.tenantId());
                         return;
                       }
-                      String msiObjId = result.get(vmCreatable.key())
-                          .managedServiceIdentityPrincipalId();
+                      String msiObjId = result.get(vmCreatable.key()).systemAssignedManagedServiceIdentityPrincipalId();
                       try {
                         aadGroup.update().withMember(msiObjId).apply();
                       } catch (Exception e) {
@@ -448,6 +473,7 @@ public class AzureComputeProvider
     }
 
     // blocking poll
+    boolean interrupted = false;
     while (vmCreates.size() > 0 &&
         (stopwatch.getTime() / 1000) <= AzurePluginConfigHelper.getAzureBackendOpPollingTimeOut()) {
       Set<ServiceFuture> completedCreates = new HashSet<>();
@@ -463,6 +489,7 @@ public class AzureComputeProvider
         Thread.sleep(POLLING_INTERVAL_SECONDS * 1000);
       } catch (InterruptedException e) {
         // Handle interrupted create as a timeout event
+        interrupted = true;
         LOG.error("VM create is interrupted.");
         break;
       }
@@ -472,7 +499,8 @@ public class AzureComputeProvider
 
     // timeout handling
     if (vmCreates.size() > 0) {
-      LOG.error("Creation for the following VMs have timed out after {} seconds: {}.",
+      LOG.error("Creation for the following VMs {} after {} seconds: {}.",
+          interrupted ? "was interrupted" : "had timed out",
           stopwatch.getTime() / 1000, getNewSubset(instanceIds, successfullyCreatedInstanceIds));
       for (ServiceFuture future : vmCreates) {
         // cancelling future does not trigger error handling
@@ -497,13 +525,18 @@ public class AzureComputeProvider
       delete(template, instanceIds);
       throw new UnrecoverableProviderException("Failed to create enough instances.");
     } else {
-      LOG.info("Successfully provisioned {} instance(s) out of {}.",
-          successfullyCreatedInstanceIds.size(), instanceIds.size());
+      LOG.info("Successfully provisioned {} instance(s) out of {}. Successfully created instance ids: {}.",
+          successfullyCreatedInstanceIds.size(), instanceIds.size(), successfullyCreatedInstanceIds);
 
       // Failed VMs and their resources are already cleaned up as failure callbacks earlier.
       // Delete all the VMs that failed the implicit MSI group join (they are successfully created),
       // and the VMs that are still in flight (timed out)
-      delete(template, getNewSubset(instanceIds, successfullyCreatedInstanceIds));
+
+      Collection<String> instanceIdsToDelete = getNewSubset(instanceIds, successfullyCreatedInstanceIds);
+      if (!instanceIdsToDelete.isEmpty()) {
+        LOG.info("Cleaning up the following instance ids: {}", instanceIdsToDelete);
+        delete(template, instanceIdsToDelete);
+      }
     }
   }
 
@@ -672,12 +705,9 @@ public class AzureComputeProvider
     int dataDiskSizeGiB = Integer.parseInt(template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE,
         templateLocalizationContext));
-    String storageType = template.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE,
-        templateLocalizationContext);
-    StorageAccountTypes storageAccountType = StorageAccountTypes.fromString(storageType);
-    DiskSkuTypes diskSkuType = storageAccountType == StorageAccountTypes.STANDARD_LRS ?
-        DiskSkuTypes.STANDARD_LRS : DiskSkuTypes.PREMIUM_LRS;
+    DiskSkuTypes diskSkuType = DiskSkuTypes.fromStorageAccountType(StorageAccountTypes.fromString(
+        Configurations.convertStorageAccountTypeString(template.getConfigurationValue(
+            AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE, templateLocalizationContext))));
     HashMap<String, String> tags =
         template.getTags().isEmpty() ? null : new HashMap<>(template.getTags());
 
@@ -742,7 +772,7 @@ public class AzureComputeProvider
     String fqdnSuffix = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.HOST_FQDN_SUFFIX,
         templateLocalizationContext);
-    VirtualMachineSizeTypes vmSize = new VirtualMachineSizeTypes(template.getConfigurationValue(
+    VirtualMachineSizeTypes vmSize = VirtualMachineSizeTypes.fromString(template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.VMSIZE, templateLocalizationContext));
     HashMap<String, String> tags = template.getTags().isEmpty() ? null :
         new HashMap<>(template.getTags());
@@ -750,6 +780,12 @@ public class AzureComputeProvider
     final boolean useCustomImage = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
         templateLocalizationContext).equals("Yes");
+    String userAssignedMsiName = template.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME,
+        templateLocalizationContext);
+    String userAssignedMsiRg = template.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP,
+        templateLocalizationContext);
     final boolean useImplicitMsi = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI,
         templateLocalizationContext).equals("Yes");
@@ -888,8 +924,16 @@ public class AzureComputeProvider
       finalVmCreatable.withTags(tags);
     }
 
+
+    if (!StringUtils.isEmpty(userAssignedMsiName) && !StringUtils.isEmpty(userAssignedMsiRg)) {
+      MSIManager msiManager = credentials.getMsiManager();
+      Identity identity = msiManager.identities().getByResourceGroup(userAssignedMsiRg, userAssignedMsiName);
+      finalVmCreatable.withExistingUserAssignedManagedServiceIdentity(identity);
+    }
+
+
     if (useImplicitMsi) {
-      finalVmCreatable.withManagedServiceIdentity();
+      finalVmCreatable.withSystemAssignedManagedServiceIdentity();
     }
 
     LOG.debug("VirtualMachine Creatable {} built successfully.", instanceId);
@@ -897,10 +941,16 @@ public class AzureComputeProvider
   }
 
   /**
-   * Returns current resource information for the specified instances, which are guaranteed to have
-   * been created by this plugin. The VM will not be included in the return list if:
-   * - the VM was not found (Azure backend returned null)
+   * Returns current resource information for the specified instances, which are guaranteed to have been created by this
+   * plugin. The VM will be included in the return list if it, or any of its associated resources (storage, networking,
+   * public ip), still exist in Azure.
+   *
+   * The VM will not be included in the return list if:
+   * - the VM and all its associated resources were not found (Azure backend returned null for all resources)
    * - there was an exception getting the VM's state (Azure backend call threw an exception)
+   * So if a VM has instance deleted, but not its associated resources, the instance will still be included
+   * in the return list, but later calls to {@linkplain #getInstanceState(AzureComputeInstanceTemplate, Collection)}
+   * should return {@linkplain InstanceStatus#FAILED} for the instance.
    *
    * @param template Azure compute instance template used to get user provided fields
    * @param instanceIds the unique identifiers for the resources
@@ -912,10 +962,11 @@ public class AzureComputeProvider
   public Collection<AzureComputeInstance> find(AzureComputeInstanceTemplate template,
       Collection<String> instanceIds) throws InterruptedException {
     Collection<AzureComputeInstance> result = new ArrayList<>();
-    List<String> vmNames = new ArrayList<>();
     String rgName = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
         SimpleResourceTemplate.getTemplateLocalizationContext(getLocalizationContext()));
+    String prefix = template.getInstanceNamePrefix();
+
     LOG.info("Finding in Resource Group {} with the instance prefix of {} the following VMs: {}.",
         rgName, template.getInstanceNamePrefix(), instanceIds);
 
@@ -928,35 +979,42 @@ public class AzureComputeProvider
       return result;
     }
 
-    for (String instanceId : instanceIds) {
-      try {
-        VirtualMachine virtualMachine = azure
-            .virtualMachines()
-            .getByResourceGroup(rgName, getVmName(instanceId, template.getInstanceNamePrefix()));
+    // all resource ids that were found (used for logging)
+    List<AzureVirtualMachineMetadata> metadatas = new ArrayList<>();
 
-        if (virtualMachine == null) {
-          LOG.debug("Virtual Machine {} with Instance ID {} in Resource Group {} not found",
-              getVmName(instanceId, template.getInstanceNamePrefix()), instanceId, rgName);
-          // no-op
-        } else {
-          LOG.debug("Virtual Machine {} with Instance ID {} in Resource Group {} found",
-              getVmName(instanceId, template.getInstanceNamePrefix()), instanceId, rgName);
-          // the instanceId field must be the instanceId Director is using (no prefix, UUID only)
-          result.add(new AzureComputeInstance(template, instanceId, virtualMachine));
-          vmNames.add(virtualMachine.name());
-        }
-      } catch (Exception e) { // catch-all
-        LOG.error("Instance '{}' not found due to error: {}", instanceId, e.getMessage());
+    for (String instanceId : instanceIds) {
+      AzureVirtualMachineMetadata metadata = new AzureVirtualMachineMetadata(azure, instanceId, template,
+          getLocalizationContext());
+
+      if (metadata.resourcesExist()) {
+        LOG.debug(metadata.toString());
+        metadatas.add(metadata);
+
+        // grab the vm object (which may or may not be null) to append to use in the result list
+        VirtualMachine vm = azure.virtualMachines().getByResourceGroup(rgName, getVmName(instanceId, prefix));
+        result.add(new AzureComputeInstance(template, instanceId, vm));
+      } else {
+        LOG.debug(metadata.toString());
+        // no-op
       }
     }
 
-    LOG.info("Found the following VMs: {}.", vmNames);
+    LOG.info("All Virtual Machines in Resource Group {} to find are gathered. {}",
+        rgName, AzureVirtualMachineMetadata.metadataListToString(metadatas));
 
     return result;
   }
 
   /**
-   * Returns the virtual machine instance states. The status will be InstanceStatus.UNKNOWN if:
+   * Returns the virtual machine instance states.
+   *
+   * The status will be InstanceStatus.FAILED if the VM does not exist, but its associated resources exist. There's a
+   * short window during allocate() where the VM create hasn't gotten far enough for the VM to show up in Azure
+   * (as in, the Azure backend returns null). During this window (usually less than 60s) the VM state could be marked as
+   * failed if getInstanceState() is called. In practice this does not matter because allocate() blocks until the VMs
+   * have been created.
+   *
+   * The status will be InstanceStatus.UNKNOWN if:
    * - the VM was not found (Azure backend returned null)
    * - there was an exception getting the VM's state (Azure backend call threw an exception)
    *
@@ -971,6 +1029,8 @@ public class AzureComputeProvider
     String rgName = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
         SimpleResourceTemplate.getTemplateLocalizationContext(getLocalizationContext()));
+    String prefix = template.getInstanceNamePrefix();
+
     LOG.info("Getting instance state in Resource Group {} with the instance prefix of {} the " +
         "following VMs: {}", rgName, template.getInstanceNamePrefix(), instanceIds);
 
@@ -992,21 +1052,36 @@ public class AzureComputeProvider
       try {
         VirtualMachine virtualMachine = azure
             .virtualMachines()
-            .getByResourceGroup(rgName, getVmName(instanceId, template.getInstanceNamePrefix()));
+            .getByResourceGroup(rgName, getVmName(instanceId, prefix));
 
+        // If the VM does not exist, but its associated resources exist, then assume that the VM is in a FAILED state.
         if (virtualMachine == null) {
-          LOG.debug("Virtual Machine {} with Instance ID {} in Resource Group {} not found",
-              getVmName(instanceId, template.getInstanceNamePrefix()), instanceId, rgName);
-          result.put(instanceId, new SimpleInstanceState(InstanceStatus.UNKNOWN));
+          AzureVirtualMachineMetadata metadata = new AzureVirtualMachineMetadata(azure, instanceId, template,
+              getLocalizationContext());
+
+          if (metadata.resourcesExist()) {
+            // there are some resources which have failed to be deleted, mark the whole VM as failed
+
+            LOG.debug("Virtual Machine {} in Resource Group {} was not found, but associated resources were found. " +
+                    "Marking the VM state as FAILED. {}" ,
+                instanceId, metadata.toString());
+            result.put(instanceId, new SimpleInstanceState(InstanceStatus.FAILED));
+          } else {
+            LOG.debug("Virtual Machine {} in Resource Group {} was not found and no associated resources were found. " +
+                    "Marking the VM state as UNKNOWN.",
+                instanceId, rgName);
+            result.put(instanceId, new SimpleInstanceState(InstanceStatus.UNKNOWN));
+          }
         } else {
-          LOG.debug("Virtual Machine {} with Instance ID {} in Resource Group {} found",
-              getVmName(instanceId, template.getInstanceNamePrefix()), instanceId, rgName);
-          result.put(instanceId,
-              getVirtualMachineInstanceState(virtualMachine.instanceView().statuses()));
+          InstanceState state = getVirtualMachineInstanceState(virtualMachine.instanceView().statuses());
+          LOG.debug("Virtual Machine {} in Resource Group {} found. Marking state as: {} ",
+              instanceId, rgName, state.getInstanceStatus());
+          result.put(instanceId, state);
         }
       } catch (Exception e) { // catch-all
-        LOG.error("Virtual Machine {} with Instance ID {} in Resource Group {} not found due to " +
-            "error: {}", getVmName(instanceId, template.getInstanceNamePrefix()), instanceId, rgName, e.getMessage());
+        LOG.error("Virtual Machine {} in Resource Group {} not found due to error. Marking the VM state as UNKNOWN. " +
+                "Error: {}",
+            instanceId, rgName, e.getMessage());
         result.put(instanceId, new SimpleInstanceState(InstanceStatus.UNKNOWN));
       }
     }
@@ -1027,7 +1102,14 @@ public class AzureComputeProvider
     HashSet<Completable> deleteCompletables = new HashSet<>();
     final List<String> successIds = Collections.synchronizedList(new ArrayList<String>());
 
-    LOG.info("Start deleting these {} {}.", resourceIds.size(), resourceName);
+    if (resourceIds.isEmpty()) {
+      LOG.info("No {} to delete - delete is successful.", resourceName);
+
+      // short-circuit return
+      return true;
+    }
+
+    LOG.info("Start deleting these {} {}: {}.", resourceIds.size(), resourceName, resourceIds);
 
     for (final String id : resourceIds) {
       // construct async operations
@@ -1073,12 +1155,13 @@ public class AzureComputeProvider
     }
 
     if (resourceIds.size() > successIds.size()) {
+      // cache the total number of resources
+      int totalResources = resourceIds.size();
       // get the failed Ids
       resourceIds.removeAll(successIds);
-      LOG.error("Deleted {} of {} {}. Failed to delete these: {}.",
-          successIds.size(), resourceIds.size(), resourceName, Arrays.toString(resourceIds.toArray()));
-      errorAccumulator.append(" ").append(resourceName).append("s: ").append(Arrays.toString(resourceIds.toArray()))
-          .append(";");
+      LOG.error("Deleted {} out of {} {}. Failed to delete these: {}.",
+          successIds.size(), totalResources, resourceName, resourceIds);
+      errorAccumulator.append(" ").append(resourceName).append("s: ").append(resourceIds).append(";");
 
       return false;
     } else {
@@ -1147,11 +1230,6 @@ public class AzureComputeProvider
   @Override
   public void delete(AzureComputeInstanceTemplate template, Collection<String> instanceIds)
       throws InterruptedException {
-    if (instanceIds.isEmpty()) {
-      // short circuit return (success)
-      return;
-    }
-
     String rgName = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP,
         SimpleResourceTemplate.getTemplateLocalizationContext(getLocalizationContext()));
@@ -1162,55 +1240,31 @@ public class AzureComputeProvider
     boolean hasPublicIp = template.getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP,
         SimpleResourceTemplate.getTemplateLocalizationContext(getLocalizationContext())).equals("Yes");
 
-    LOG.info("Preparing to delete VMs in Resource Group {}. Instance prefix: {}. VM Ids: {}.", rgName,
-        template.getInstanceNamePrefix(), instanceIds);
-
-    Collection<AzureComputeInstance> vmList = find(template, instanceIds);
-    if (vmList.isEmpty()) {
-      // short circuit return (success)
+    // short circuit return (success) if there aren't any instance ids to return
+    if (instanceIds.isEmpty()) {
+      LOG.info("No instance ids to delete: delete is successful.");
       return;
     }
 
-    List<String> vmIds = new ArrayList<>();
-    List<String> mdIds = new ArrayList<>();
-    List<String> saIds = new ArrayList<>();
-    List<String> nicIds = new ArrayList<>();
-    List<String> pipIds = new ArrayList<>();
+    LOG.info("Gathering Azure Resource Ids to delete from Resource Group {} that are associated with instance ids: {}.",
+        rgName, instanceIds);
 
-    // collect resources IDs for deletion
-    LOG.info("Collect resource IDs for deletion.");
-    Azure azure = credentials.authenticate();
-    for (AzureComputeInstance vmToDelete : vmList) {
-      final VirtualMachine vm = vmToDelete.getInstanceDetails();
-      try {
-        vmIds.add(vm.id());
-
-        if (useManagedDisks) {
-          mdIds.add(vmToDelete.getInstanceDetails().osDiskId());
-          for (VirtualMachineDataDisk dataDisk : vmToDelete.getInstanceDetails().dataDisks()
-              .values()) {
-            mdIds.add(dataDisk.id());
-          }
-        } else {
-          String saName = getStorageAccountNameFromVM(vmToDelete.getInstanceDetails());
-          StorageAccount storageAccount = azure.storageAccounts()
-              .getByResourceGroup(rgName, saName);
-          saIds.add(storageAccount.id());
-        }
-
-        nicIds.add(vm.primaryNetworkInterfaceId());
-
-        pipIds.add(vm.getPrimaryPublicIPAddressId());
-      } catch (Exception e) {
-        LOG.info("Error occurred while collecting resource IDs for deletion. " +
-            "No resources will be deleted. Check Azure Resource Group {} for orphaned resources.",
-            rgName, e);
-        throw new UnrecoverableProviderException(e);
+    // collect the resource ids for deletion
+    List<AzureVirtualMachineMetadata> metadatas = new ArrayList<>();
+    try {
+      Azure azure = credentials.authenticate();
+      for (String instanceId : instanceIds) {
+        metadatas.add(new AzureVirtualMachineMetadata(azure, instanceId, template, getLocalizationContext()));
       }
+    } catch (Exception e) {
+      // throw an Unrecoverable if there's any problems getting resource ids
+      LOG.error("Error occurred while collecting resource ids for deletion. No resources deleted and an " +
+          "UnrecoverableProviderException will be thrown. Error: ", e);
+      throw new UnrecoverableProviderException(e);
     }
-
-    LOG.info("Starting to delete VMs in Resource Group {}. Instance prefix: {}. VM Ids: {}.", rgName,
-        template.getInstanceNamePrefix(), instanceIds);
+    LOG.info("All Resource Ids in Resource Group {} to delete are gathered. {}",
+        rgName, AzureVirtualMachineMetadata.metadataListToString(metadatas)
+    );
 
     StopWatch stopwatch = new StopWatch();
     stopwatch.start();
@@ -1220,30 +1274,30 @@ public class AzureComputeProvider
         String.format("Delete Failure - not all resources in Resource Group %s were deleted:", rgName));
 
     // Delete VMs
-      boolean successfulVmDeletes = asyncDeleteByIdHelper(credentials.authenticate().virtualMachines(),
-          "Virtual Machines", vmIds, deleteFailedBuilder);
+    boolean successfulVmDeletes = asyncDeleteByIdHelper(credentials.authenticate().virtualMachines(),
+        "Virtual Machines", AzureVirtualMachineMetadata.getVmIds(metadatas), deleteFailedBuilder);
 
     // Delete Storage
     boolean successfulStorageDeletes;
     if (useManagedDisks) {
       // Delete Managed Disks
-      successfulStorageDeletes = asyncDeleteByIdHelper(credentials.authenticate().disks(), "Managed Disks", mdIds,
-          deleteFailedBuilder);
+      successfulStorageDeletes = asyncDeleteByIdHelper(credentials.authenticate().disks(), "Managed Disks",
+          AzureVirtualMachineMetadata.getMdIds(metadatas), deleteFailedBuilder);
     } else {
       // Delete Storage Accounts
       successfulStorageDeletes = asyncDeleteByIdHelper(credentials.authenticate().storageAccounts(), "Storage Accounts",
-          saIds, deleteFailedBuilder);
+          AzureVirtualMachineMetadata.getSaIds(metadatas), deleteFailedBuilder);
     }
 
     // Delete NICs
     boolean successfulNicDeletes = asyncDeleteByIdHelper(credentials.authenticate().networkInterfaces(),
-        "Network Interfaces", nicIds, deleteFailedBuilder);
+        "Network Interfaces", AzureVirtualMachineMetadata.getNicIds(metadatas), deleteFailedBuilder);
 
     // Delete PublicIPs
     boolean successfulPipDeletes = true; // default to true
     if (hasPublicIp) {
-      successfulPipDeletes = asyncDeleteByIdHelper(credentials.authenticate().publicIPAddresses(), "Public IPs", pipIds,
-          deleteFailedBuilder);
+      successfulPipDeletes = asyncDeleteByIdHelper(credentials.authenticate().publicIPAddresses(), "Public IPs",
+          AzureVirtualMachineMetadata.getpipIds(metadatas), deleteFailedBuilder);
     }
 
     stopwatch.stop();
@@ -1258,7 +1312,7 @@ public class AzureComputeProvider
     }
 
     LOG.info("Successfully deleted all {} of {} VMs + dependent resources in Resource Group {} in {} seconds. " +
-        "Instance prefix: {}. VMs Ids: {}", instanceIds.size(), instanceIds.size(), rgName, stopwatch.getTime() / 1000,
+        "Instance prefix: {}. VMs Ids: {}.", instanceIds.size(), instanceIds.size(), rgName, stopwatch.getTime() / 1000,
         template.getInstanceNamePrefix(), instanceIds);
   }
 
@@ -1291,7 +1345,7 @@ public class AzureComputeProvider
    * @param suffix fqdn suffix
    * @return the VM name
    */
-  static String getComputerName(String instanceId, String prefix, String suffix) {
+  private static String getComputerName(String instanceId, String prefix, String suffix) {
     if (suffix == null || suffix.trim().isEmpty()) {
       // no suffix
       return prefix + "-" + getFirstGroupOfUuid(instanceId);
@@ -1347,33 +1401,55 @@ public class AzureComputeProvider
   }
 
   /**
-   * Gets Director InstanceStates from Azure Statuses
+   * Gets Director InstanceStates from Azure Statuses.
    *
    * N.b. Azure has both PowerState and ProvisioningState, but there's no defined list or Enum for
    * ProvisioningState.
    *
    * xxx/all - this method is missing PowerStates and ProvisioningStates
    * xxx/all - 3/27: asked MSFT about PowerState and ProvisioningState
-   * @param statuses
-   * @return
+   * @param statuses a list of status information, from Azure
+   * @return a Director's InstanceState derived from Azure's InstanceViewStatus
    */
   private InstanceState getVirtualMachineInstanceState(List<InstanceViewStatus> statuses) {
+    // used for printing out the list of statuses
+    List<String> l = new ArrayList<>();
+    for (InstanceViewStatus i : statuses) {
+      l.add(i.code());
+    }
+
+    // check the statuses - see if any of them match
+    LOG.debug("Checking these statuses: " + l);
+
     for (InstanceViewStatus status : statuses) {
-      LOG.info("Status is {}.", status.code());
       if (status.code().equals(PowerState.RUNNING.toString())) {
+        LOG.debug("Status is {}.", InstanceStatus.RUNNING);
         return new SimpleInstanceState(InstanceStatus.RUNNING);
-      } else if (status.code().equals(PowerState.DEALLOCATED.toString())) {
-        return new SimpleInstanceState(InstanceStatus.STOPPED);
       } else if (status.code().equals(PowerState.DEALLOCATING.toString())) {
-        return new SimpleInstanceState(InstanceStatus.DELETING);
+        LOG.debug("Status is {}.", InstanceStatus.STOPPING);
+        return new SimpleInstanceState(InstanceStatus.STOPPING);
+      } else if (status.code().equals(PowerState.DEALLOCATED.toString())) {
+        LOG.debug("Status is {}.", InstanceStatus.STOPPED);
+        return new SimpleInstanceState(InstanceStatus.STOPPED);
+      } else if (status.code().equals(PowerState.STARTING.toString())) {
+        LOG.debug("Status is {}.", InstanceStatus.PENDING);
+        return new SimpleInstanceState(InstanceStatus.PENDING);
+      } else if (status.code().equals(PowerState.STOPPED.toString())) {
+        LOG.debug("Status is {}.", InstanceStatus.STOPPED);
+        return new SimpleInstanceState(InstanceStatus.STOPPED);
+      } else if (status.code().equals(PowerState.STOPPING.toString())) {
+        LOG.debug("Status is {}.", InstanceStatus.STOPPING);
+        return new SimpleInstanceState(InstanceStatus.STOPPING);
       } else if (status.code().equals(PowerState.UNKNOWN.toString())) {
+        LOG.debug("Status is {}.", InstanceStatus.FAILED);
         return new SimpleInstanceState(InstanceStatus.FAILED);
       } else if (status.code().toLowerCase().contains("fail")) {
+        LOG.debug("Status is {}.", InstanceStatus.FAILED);
         // AZURE_SDK Any state that has the word 'fail' in it indicates VM is in FAILED state
         return new SimpleInstanceState(InstanceStatus.FAILED);
       }
-      LOG.info("Status {} did not match.", status.code());
     }
+    LOG.info("None of the VM statuses could be mapped to a SPI InstanceStatus. Statuses checked: " + l);
     return new SimpleInstanceState(InstanceStatus.UNKNOWN);
   }
 }

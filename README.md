@@ -2,7 +2,7 @@
 The Cloudera Director Azure Plugin is an implementation of the [Cloudera Director Service Provider Interface](https://github.com/cloudera/director-spi) for the [Microsoft Azure](https://azure.microsoft.com) cloud platform.
 
 ## Copyright and License
-Copyright © 2016-2017 Cloudera. Licensed under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
+Copyright © 2016-2018 Cloudera. Licensed under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
 
 Cloudera, the Cloudera logo, and any other product or service names or slogans contained in this document are trademarks of Cloudera and its suppliers or licensors, and may not be copied, imitated or used, in whole or in part, without the prior written permission of Cloudera or the applicable trademark holder.
 
@@ -89,6 +89,7 @@ To run all Live Tests, from Launchpad's base directory run:
 mvn -e \
 -pl plugins/azure/tests \
 -Dtest.azure.live \
+-Dtest.azure.implicitMsiLive \
 -DsubscriptionId=${SUBSCRIPTION_ID} \
 -DtenantId=${TENANT_ID} \
 -DclientId=${CLIENT_ID} \
@@ -105,6 +106,7 @@ To run a specific test, from Launchpad's base directory run (note the change fro
 mvn -e \
 -pl plugins/azure/tests \
 -Dtest.azure.live \
+-Dtest.azure.implicitMsiLive \
 -DsubscriptionId=${SUBSCRIPTION_ID} \
 -DtenantId=${TENANT_ID} \
 -DclientId=${CLIENT_ID} \
@@ -113,7 +115,7 @@ mvn -e \
 -Dtest.azure.sshPrivateKeyPath=${SSH_PRIVATE_KEY_PATH} \
 -Dazure.live.region=${REGION} \
 -Dazure.live.rg=${RESOURCE_GROUP_NAME} \
--Dtest=${TEST}
+-Dtest=${TEST} \
 test
 ```
 
@@ -207,10 +209,9 @@ The `azure-plugin.conf` file defines settings that Cloudera Director uses to val
 
 * `provider` > `supported-regions`: this is the list of regions that a cluster can be deployed into. Only regions that support premium storage should be added to the list - that list can be found [here](https://azure.microsoft.com/en-us/regions/services/).
 * `instance` > `supported-instances`: this is the list of supported instance sizes that can be used. Only certain sizes have been certified.
-* `instance` > `supported-premium-data-disk-sizes`: this is the list of supported disk sizes that can be used. Only certain sizes have been certified.
-* `instance` > `maximum-standard-data-disk-size`: this is the maximum size standard storage disk that can be used. Only certain sizes have been certified.
+* `instance` > `maximum-disk-size`: this is the maximum disk size, inclusive, for both Premium and Standard storage. Only certain sizes have been certified.
 
-The latest supported instances, premium disks, and standard disks can be found in the [Azure Reference Architecture](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf) (PDF).
+The latest supported premium and standard disk sizes can be found in the [Azure Reference Architecture](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf) (PDF).
 
 **How do I add a new region to use?**
 
@@ -220,25 +221,9 @@ The latest supported instances, premium disks, and standard disks can be found i
 4. Now you can use your newly defined region when deploying clusters.
 
 
-**How do I add a new instance to use?**
+**How do I change the maximum premium or standard disk size?**
 
-1. Take the `azure-plugin.conf` file found in this repository and **add** a new instance to the `instance`>`supported-instances` list. The plugin will replace its internal list with this list so make sure you keep all of the supported regions that are already defined in `azure-plugin.conf`
-2. On Cloudera Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
-3. Restart Cloudera Director with `sudo service cloudera-director-server restart`
-4. Now you can use your newly defined instance when deploying clusters.
-
-
-**How do I add a new Premium disk size to use?**
-
-1. Take the `azure-plugin.conf` file found in this repository and **add** a new disk size to the `instance`>`supported-premium-data-disk-sizes` list. The plugin will replace its internal list with this list so make sure you keep all of the supported disk sizes that are already defined in `azure-plugin.conf`
-2. On Cloudera Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
-3. Restart Cloudera Director with `sudo service cloudera-director-server restart`
-4. Now you can use your newly defined Premium disk when deploying clusters.
-
-
-**How do I change the maximum Standard disk size to use?**
-
-1. Take the `azure-plugin.conf` file found in this repository and **change** the `instance`>`maximum-standard-data-disk-size` value.
+1. Take the `azure-plugin.conf` file found in this repository and **change** the `instance` > `maximum-disk-size` value.
 2. On Cloudera Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
 3. Restart Cloudera Director with `sudo service cloudera-director-server restart`
 4. Now you can use your newly defined Standard disk when deploying clusters.
@@ -246,28 +231,22 @@ The latest supported instances, premium disks, and standard disks can be found i
 
 **Any caveats I should be aware of?**
 
-When you use a custom `azure-plugin.conf` any keys defined replace those defined internally, so you must append to lists rather than creating a list with only the new values. For example, if you were to add an instance to `instance` > `supported-instances` you would need to keep all of the currently defined supported instances and append yours:
+When you use a custom `azure-plugin.conf` any keys defined replace those defined internally, so you must append to lists rather than creating a list with only the new values. For example, if you were to add a region to `provider` > `supported-regions` you would need to keep all of the currently defined supported regions and append yours:
 
-    ```
-    supported-instances: [
-        "STANDARD_DS15_V2",
-        "STANDARD_DS14_V2",
-        "STANDARD_DS13_V2",
-        "STANDARD_DS12_V2",
-        "STANDARD_D15_V2",
-        "STANDARD_D14_V2",
-        "STANDARD_D13_V2",
-        "STANDARD_D12_V2",
-        "STANDARD_DS14",
-        "STANDARD_DS13",
-        "STANDARD_D14",
-        "STANDARD_D13",
-        "STANDARD_GS5",
-        "STANDARD_GS4",
-        "YOUR_NEW_INSTANCE"
-    ]
-    ```
-    If you were to have a list with only `YOUR_NEW_INSTANCE` the rest of the instances would stop working.
+```
+supported-regions: [
+    # Americas
+    "eastus",
+    "eastus2",
+    "centralus",
+
+    [...]
+
+    "Your New Region"
+]
+```
+
+If you were to have a list with only the new region than the rest of the regions would stop working.
 
 When you copy your modified `azure-plugin.conf` file to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf` make sure you're putting it in the latest `azure-provider-[version]` directory.
 
