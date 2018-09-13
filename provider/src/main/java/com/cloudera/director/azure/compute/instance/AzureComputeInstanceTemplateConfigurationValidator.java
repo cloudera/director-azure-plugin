@@ -16,20 +16,22 @@
 
 package com.cloudera.director.azure.compute.instance;
 
-import static com.cloudera.director.spi.v1.model.util.Validations.addError;
+import static com.cloudera.director.azure.Configurations.AZURE_CUSTOM_DATA_MAX_CHARACTERS;
+import static com.cloudera.director.spi.v2.model.util.Validations.addError;
 
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.ConfigurationValidator;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.InstanceTemplate;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.exception.ValidationException;
-import com.google.common.collect.Sets;
+import com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.ConfigurationValidator;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.InstanceTemplate;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.exception.ValidationException;
+import com.google.common.base.Strings;
+import com.google.common.io.BaseEncoding;
 import com.microsoft.azure.CloudException;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.AvailabilitySet;
@@ -44,12 +46,14 @@ import com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.microsoft.azure.management.network.Network;
 import com.microsoft.azure.management.storage.SkuName;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
@@ -98,13 +102,14 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
   @Override
   public void validate(String name, Configured directorConfig,
       PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
-    final String genericErrorMsg = "Error occurred during validating: %s";
+    final String genericErrorMsg = "Error occurred during validation: %s.";
 
     // Checks that don't reach out to the Azure backend.
     checkFQDNSuffix(directorConfig, accumulator, localizationContext);
     checkInstancePrefix(directorConfig, accumulator, localizationContext);
     checkStorage(directorConfig, accumulator, localizationContext);
     checkSshUsername(directorConfig, accumulator, localizationContext);
+    checkCustomData(directorConfig, accumulator, localizationContext);
 
     // Azure backend checks: These checks verifies the resources specified in instance template do
     // exist in Azure.
@@ -122,10 +127,10 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       checkUserAssignedMsi(directorConfig, accumulator, localizationContext);
       checkImplicitMsiGroupName(directorConfig, accumulator, localizationContext);
     } catch (Exception e) {
-      LOG.debug(genericErrorMsg, e);
+      LOG.debug(String.format(genericErrorMsg, e.getMessage()));
       // use null key to indicate generic error
       ConfigurationPropertyToken token = null;
-      addError(accumulator, token, localizationContext, null, genericErrorMsg, e);
+      addError(accumulator, token, localizationContext, null, genericErrorMsg, e.getMessage());
     }
   }
 
@@ -327,6 +332,107 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       addError(accumulator,
           ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME,
           localizationContext, null, disallowedUsernamesMsg, sshUsername, disallowedUsernames);
+    }
+  }
+
+  /**
+   * Checks that the encoded custom data and unencoded custom data are valid:
+   * - only one, not both, can be set
+   * - the Base64 custom data passed to Azure can't exceed Azure's max char length of 87380
+   *
+   * N.b. that custom data of empty string ("") passes validation, but errors if passed to Azure.
+   *
+   * @param directorConfig Director config
+   * @param accumulator error accumulator
+   * @param localizationContext localization context to extract config
+   */
+  void checkCustomData(Configured directorConfig, PluginExceptionConditionAccumulator accumulator,
+      LocalizationContext localizationContext) {
+    final String bothCustomDataSetMsg = "Custom Data Unencoded and Custom Data Encoded can not " +
+        "both be set. Set one, not both.";
+    final String customDataEncodedNotEncodedMsg = "Custom Data Encoded is not actually Base64 " +
+        "encoded. Base64 encode the data or use the Custom Data Unencoded field.";
+    final String customDataUnencodedTooLongWhenEncodedMsg = "Custom Data Unencoded is too long " +
+        "after Base64 encoding it. Pre encoding length: %s, encoded length: %s, max length %s " +
+        "(chars).";
+    final String customDataEncodedTooLongMsg = "Custom Data Encoded is too long. Length: %s, max " +
+        "length: %s (chars).";
+
+    String customDataUnencoded = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED,
+        localizationContext);
+    String customDataEncoded = directorConfig.getConfigurationValue(
+        AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED,
+        localizationContext);
+
+    // error if both are set
+    if (!Strings.isNullOrEmpty(customDataUnencoded) && !Strings.isNullOrEmpty(customDataEncoded)) {
+      LOG.debug(bothCustomDataSetMsg);
+      addError(accumulator,
+          AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED,
+          localizationContext,
+          null,
+          bothCustomDataSetMsg);
+
+      // short-circuit return
+      return;
+    }
+
+    // custom data encoded checks
+    if (!Strings.isNullOrEmpty(customDataEncoded)) {
+      // error if custom data encoded is not actually encoded
+      if (!BaseEncoding.base64().canDecode(customDataEncoded)) {
+        LOG.debug(customDataEncodedNotEncodedMsg);
+        addError(accumulator,
+            AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED,
+            localizationContext,
+            null,
+            customDataEncodedNotEncodedMsg);
+
+        // short-circuit return
+        return;
+      }
+
+      // error if custom data encoded is too long
+      if (customDataEncoded.length() > AZURE_CUSTOM_DATA_MAX_CHARACTERS) {
+        LOG.debug(String.format(customDataEncodedTooLongMsg,
+            customDataEncoded.length(),
+            AZURE_CUSTOM_DATA_MAX_CHARACTERS));
+        addError(accumulator,
+            AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED,
+            localizationContext,
+            null,
+            customDataEncodedTooLongMsg,
+            customDataEncoded.length(),
+            AZURE_CUSTOM_DATA_MAX_CHARACTERS);
+
+        // short-circuit return
+        return;
+      }
+    }
+
+    // custom data unencoded checks
+    if (!Strings.isNullOrEmpty(customDataUnencoded)) {
+      // error if custom data unencoded is too long after it's encoded
+      String encodedCustomDataUnencoded =
+          BaseEncoding.base64().encode(customDataUnencoded.getBytes(StandardCharsets.UTF_8));
+      if (encodedCustomDataUnencoded.length() > AZURE_CUSTOM_DATA_MAX_CHARACTERS) {
+        LOG.debug(String.format(customDataUnencodedTooLongWhenEncodedMsg,
+            customDataUnencoded.length(),
+            encodedCustomDataUnencoded.length(),
+            AZURE_CUSTOM_DATA_MAX_CHARACTERS));
+        addError(accumulator,
+            AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED,
+            localizationContext,
+            null,
+            customDataUnencodedTooLongWhenEncodedMsg,
+            customDataUnencoded.length(),
+            encodedCustomDataUnencoded.length(),
+            AZURE_CUSTOM_DATA_MAX_CHARACTERS);
+
+        // short-circuit return
+        return;
+      }
     }
   }
 
@@ -714,11 +820,10 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
     boolean isSuccessful = true;
 
-    Set<String> allowableVmSizes = Sets.newHashSet();
-    for (VirtualMachineSize vmSizeForRegion :
-        azure.virtualMachines().sizes().listByRegion(region)) {
-      allowableVmSizes.add(vmSizeForRegion.name().toUpperCase());
-    }
+    Set<String> allowableVmSizes = azure.virtualMachines().sizes().listByRegion(region)
+        .stream()
+        .map(allowableVmSize -> allowableVmSize.name().toUpperCase())
+        .collect(Collectors.toSet());
 
     if (!allowableVmSizes.contains(vmSize.toUpperCase())) {
       LOG.debug(String.format(virtualMachineMsg, vmSize, allowableVmSizes, region));
@@ -839,7 +944,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       return;
     }
 
-    // at least one MSI field is set - error if only one is set
+    // at this point least one MSI field is set, and both need to be set - error if only one is set
     if (StringUtils.isBlank(userAssignedMsiName)) {
       LOG.debug(uaMsiNameMissingMsg);
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME,

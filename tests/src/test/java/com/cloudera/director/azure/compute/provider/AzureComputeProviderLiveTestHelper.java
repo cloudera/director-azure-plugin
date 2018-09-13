@@ -16,15 +16,22 @@
 
 package com.cloudera.director.azure.compute.provider;
 
+import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.MANAGED_OS_DISK_SUFFIX;
+import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getFirstGroupOfUuid;
+import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getVmName;
+
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
-import com.cloudera.director.spi.v1.model.InstanceTemplate;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleResourceTemplate;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.StorageProfile;
+import com.cloudera.director.spi.v2.model.InstanceTemplate;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleResourceTemplate;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 class AzureComputeProviderLiveTestHelper {
 
@@ -89,6 +96,25 @@ class AzureComputeProviderLiveTestHelper {
   }
 
   /**
+   * Extracts StorageAccount resource name from storage profile.
+   *
+   * @param storageProfile storage profile of a virtual machine
+   * @return StorageAccount resource name
+   */
+  static String getStorageAccountNameFromStorageProfile(StorageProfile storageProfile) {
+    String text = storageProfile.osDisk().vhd().uri();
+    String patternString = "^https://(.+?)\\..*";
+    Pattern pattern = Pattern.compile(patternString);
+    Matcher matcher = pattern.matcher(text);
+
+    if (matcher.matches()) {
+      return matcher.group(1);
+    } else {
+      return "";
+    }
+  }
+
+  /**
    * Does the heavy lifting for the other resourcesDeleted methods.
    */
   private static boolean resourcesDeleted(
@@ -100,10 +126,10 @@ class AzureComputeProviderLiveTestHelper {
       int numberOfDataDisks)
       throws Exception {
     for (String id : instanceIds) {
-      String commonResourceNamePrefix = AzureComputeProvider.getFirstGroupOfUuid(id);
+      String commonResourceNamePrefix = getFirstGroupOfUuid(id);
 
       // VM
-      if (azure.virtualMachines().getByResourceGroup(rgName, AzureComputeProvider.getVmName(id, prefix)) != null) {
+      if (azure.virtualMachines().getByResourceGroup(rgName, getVmName(id, prefix)) != null) {
         return false;
       }
 
@@ -111,7 +137,7 @@ class AzureComputeProviderLiveTestHelper {
       if (managed) {
         // OS disk
         if (azure.disks().getByResourceGroup(
-            rgName, commonResourceNamePrefix + AzureComputeProvider.MANAGED_OS_DISK_SUFFIX) != null) {
+            rgName, commonResourceNamePrefix + MANAGED_OS_DISK_SUFFIX) != null) {
           return false;
         }
         // data disks

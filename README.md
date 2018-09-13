@@ -1,5 +1,5 @@
-# Azure Plugin for Cloudera Director
-The Cloudera Director Azure Plugin is an implementation of the [Cloudera Director Service Provider Interface](https://github.com/cloudera/director-spi) for the [Microsoft Azure](https://azure.microsoft.com) cloud platform.
+# Azure Plugin for Cloudera Altus Director
+The Cloudera Altus Director Azure Plugin is an implementation of the [Cloudera Altus Director Service Provider Interface](https://github.com/cloudera/director-spi) for the [Microsoft Azure](https://azure.microsoft.com) cloud platform.
 
 ## Copyright and License
 Copyright © 2016-2018 Cloudera. Licensed under the [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0).
@@ -18,7 +18,7 @@ The information in this document is subject to change without notice. Cloudera s
 
 # Testing
 
-These instructions describe how to run unit and live tests for the Cloudera Director Azure Plugin.
+These instructions describe how to run unit and live tests for the Cloudera Altus Director Azure Plugin.
 
 
 ## Prerequisites
@@ -122,7 +122,7 @@ test
 
 # Deploying
 
-These instructions describe how to deploy the Cloudera Director Azure Plugin.
+These instructions describe how to deploy the Cloudera Altus Director Azure Plugin.
 
 
 ## Prerequisites
@@ -147,7 +147,7 @@ Before using this plugin you will need:
 
 ### Forward and reverse DNS
 
-Cloudera Distribution of Hadoop (CDH) and Cloudera Director require forward and reverse hostname resolution; this is not currently supported by Azure ([Azure only supports forward resolution](https://azure.microsoft.com/en-us/documentation/articles/virtual-networks-name-resolution-for-vms-and-role-instances/)) and it's required to do [name resolution using your own DNS server](https://azure.microsoft.com/en-us/documentation/articles/virtual-networks-name-resolution-for-vms-and-role-instances/#name-resolution-using-your-own-dns-server).
+Cloudera Distribution of Hadoop (CDH) and Cloudera Altus Director require forward and reverse hostname resolution; this is not currently supported by Azure ([Azure only supports forward resolution](https://azure.microsoft.com/en-us/documentation/articles/virtual-networks-name-resolution-for-vms-and-role-instances/)) and it's required to do [name resolution using your own DNS server](https://azure.microsoft.com/en-us/documentation/articles/virtual-networks-name-resolution-for-vms-and-role-instances/#name-resolution-using-your-own-dns-server).
 
 [More instructions](https://www.cloudera.com/documentation/director/latest/topics/director_get_started_azure_ddns.html).
 
@@ -159,11 +159,11 @@ Per the [Azure Reference Architecture](http://www.cloudera.com/documentation/oth
 Increase the limits, especially core count, by filing a support ticket on the [Azure portal](https://portal.azure.com/).
 
 
-# Understanding and Changing the Cloudera Director Azure Plugin Config Files
+# Understanding and Changing the Cloudera Altus Director Azure Plugin Config Files
 
 **IMPORTANT:** The [Cloudera Enterprise Reference Architecture for Azure Deployments](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf) (PDF) is the authoritative document for supported deployment configurations in Azure.
 
-There are two files that the Cloudera Director Azure Plugin uses to change settings:
+There are two files that the Cloudera Altus Director Azure Plugin uses to change settings:
 
 * `images.conf`
 * `azure-plugin.conf`
@@ -174,14 +174,14 @@ The files and their uses are explained below.
 
 **What does `images.conf` do?**
 
-The `images.conf` file defines the VM images Cloudera Director can use to provision VMs. The `images.conf` file in this repository is continuously updated with the latest supported VM images. The latest supported images can be found in the [Azure Reference Architecture](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf) (PDF).
+The `images.conf` file defines the VM images Cloudera Altus Director can use to provision VMs. The `images.conf` file in this repository is continuously updated with the latest supported VM images. The latest supported images can be found in the [Azure Reference Architecture](http://www.cloudera.com/documentation/other/reference-architecture/PDF/cloudera_ref_arch_azure.pdf) (PDF).
 
 
 **How do I add another image I want to use?**
 
 1. Take the `images.conf` file found in this repository and add a new image using the following format:
     ```
-    image-name { # this is used to reference this image within Cloudera Director
+    image-name { # this is used to reference this image within Cloudera Altus Director
       # these fields uniquely identify the image, their values are found within Azure
       publisher: publisher_name
       offer: offer_name
@@ -189,23 +189,23 @@ The `images.conf` file defines the VM images Cloudera Director can use to provis
       version: version_name
     }
     ```
-2. On Cloudera Director server, copy your modified `images.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/images.conf`.
-3. Restart Cloudera Director with `sudo service cloudera-director-server restart`.
-4. Now you can use your newly defined image when deploying clusters. Note that in the Cloudera Director UI you won't see the image-name in the dropdown list - just type it in manually and it will work.
+2. On Cloudera Altus Director server, copy your modified `images.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/images.conf`.
+3. Restart Cloudera Altus Director with `sudo service cloudera-director-server restart`.
+4. Now you can use your newly defined image when deploying clusters. Note that in the Cloudera Altus Director UI you won't see the image-name in the dropdown list - just type it in manually and it will work.
 
 
 **Any caveats I should be aware of?**
 
 * When you copy your modified `images.conf` file to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/images.conf` make sure you're putting it in the latest `azure-provider-[version]` directory.
 
-* After updating your version of Cloudera Director you'll need to copy your `.conf` files to the latest `azure-provider-[version]` directory.
+* After updating your version of Cloudera Altus Director you'll need to copy your `.conf` files to the latest `azure-provider-[version]` directory.
 
 
 ## `azure-plugin.conf`
 
 **What does `azure-plugin.conf` do?**
 
-The `azure-plugin.conf` file defines settings that Cloudera Director uses to validate VMs before provisioning. There are a bunch of fields, here are the important ones:
+The `azure-plugin.conf` file defines settings that Cloudera Altus Director uses to validate VMs before provisioning. There are a bunch of fields, here are the important ones:
 
 * `provider` > `supported-regions`: this is the list of regions that a cluster can be deployed into. Only regions that support premium storage should be added to the list - that list can be found [here](https://azure.microsoft.com/en-us/regions/services/).
 * `instance` > `supported-instances`: this is the list of supported instance sizes that can be used. Only certain sizes have been certified.
@@ -216,16 +216,16 @@ The latest supported premium and standard disk sizes can be found in the [Azure 
 **How do I add a new region to use?**
 
 1. Take the `azure-plugin.conf` file found in this repository and **add** a new region to the `provider` > `supported-regions` list. The plugin will replace its internal list with this list so make sure you keep all of the supported regions that are already defined in `azure-plugin.conf`
-2. On Cloudera Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
-3. Restart Cloudera Director with `sudo service cloudera-director-server restart`
+2. On Cloudera Altus Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
+3. Restart Cloudera Altus Director with `sudo service cloudera-director-server restart`
 4. Now you can use your newly defined region when deploying clusters.
 
 
 **How do I change the maximum premium or standard disk size?**
 
 1. Take the `azure-plugin.conf` file found in this repository and **change** the `instance` > `maximum-disk-size` value.
-2. On Cloudera Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
-3. Restart Cloudera Director with `sudo service cloudera-director-server restart`
+2. On Cloudera Altus Director server, copy your modified `azure-plugin.conf` to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf`.
+3. Restart Cloudera Altus Director with `sudo service cloudera-director-server restart`
 4. Now you can use your newly defined Standard disk when deploying clusters.
 
 
@@ -250,7 +250,7 @@ If you were to have a list with only the new region than the rest of the regions
 
 When you copy your modified `azure-plugin.conf` file to `/var/lib/cloudera-director-plugins/azure-provider-*/etc/azure-plugin.conf` make sure you're putting it in the latest `azure-provider-[version]` directory.
 
-After updating your version of Cloudera Director you'll need to copy your `.conf` files to the latest `azure-provider-[version]` directory.
+After updating your version of Cloudera Altus Director you'll need to copy your `.conf` files to the latest `azure-provider-[version]` directory.
 
 
 **What about the other fields?**

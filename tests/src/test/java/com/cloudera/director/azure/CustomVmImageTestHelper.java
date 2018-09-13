@@ -19,15 +19,16 @@ package com.cloudera.director.azure;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty;
+import com.cloudera.director.azure.compute.instance.AzureInstance;
 import com.cloudera.director.azure.compute.provider.AzureComputeProvider;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachine;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineCustomImage;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.SkuName;
-import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.provider.CloudProvider;
-import com.cloudera.director.spi.v1.provider.Launcher;
+import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.provider.CloudProvider;
+import com.cloudera.director.spi.v2.provider.Launcher;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
@@ -113,12 +114,13 @@ public class CustomVmImageTestHelper {
 
     // 2. verify instances can be found
     LOG.info("2. find");
-    Collection<AzureComputeInstance> foundInstances = provider.find(template, instanceIds);
+    Collection<? extends AzureComputeInstance<? extends AzureInstance>> foundInstances =
+        provider.find(template, instanceIds);
 
     // 3. de-provision VM
     LOG.info("3. de-provision");
-    AzureComputeInstance instance = foundInstances.iterator().next();
-    VirtualMachine vm = instance.getInstanceDetails();
+    AzureComputeInstance<? extends AzureInstance> instance = foundInstances.iterator().next();
+    VirtualMachine vm = (VirtualMachine) instance.unwrap();
 
     // store the key file as a temporary file for ssh command
     File keyFile = File.createTempFile("keyFile", ".tmp");

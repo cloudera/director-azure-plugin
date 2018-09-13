@@ -17,9 +17,9 @@
 
 package com.cloudera.director.azure.compute.provider;
 
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
 
 /**
  * Azure provider level configuration properties.
@@ -29,7 +29,7 @@ public enum AzureComputeProviderConfigurationProperty implements ConfigurationPr
   REGION(new SimpleConfigurationPropertyBuilder()
       .configKey("region")
       .name("Region")
-      .defaultValue("westus")
+      .defaultPlaceholder("Select a region")
       .defaultDescription("Region for deployment.<br />All resources used for deployment must " +
           "exist in the same region.<br /><a target='_blank' href='https://azure.microsoft.com/" +
           "en-us/regions/'>More Information</a>")

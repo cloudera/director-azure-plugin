@@ -19,11 +19,11 @@ package com.cloudera.director.azure;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.credentials.AzureCredentialsProvider;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.common.http.HttpProxyParameters;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.provider.CloudProvider;
-import com.cloudera.director.spi.v1.provider.util.AbstractLauncher;
+import com.cloudera.director.spi.v2.common.http.HttpProxyParameters;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.provider.CloudProvider;
+import com.cloudera.director.spi.v2.provider.util.AbstractLauncher;
 import com.typesafe.config.Config;
 
 import java.io.File;

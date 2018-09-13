@@ -17,13 +17,13 @@
 package com.cloudera.director.azure.compute.provider;
 
 import static com.cloudera.director.azure.Configurations.AZURE_CONFIG_PROVIDER_REGIONS;
-import static com.cloudera.director.spi.v1.model.util.Validations.addError;
+import static com.cloudera.director.spi.v2.model.util.Validations.addError;
 
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.model.ConfigurationValidator;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.ConfigurationValidator;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
 import com.typesafe.config.Config;
 
 import org.slf4j.Logger;

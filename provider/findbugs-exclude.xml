@@ -15,4 +15,11 @@
   -->
 
 <FindBugsFilter>
+    <Match>
+        <Bug pattern="NM_SAME_SIMPLE_NAME_AS_INTERFACE" />
+        <Or>
+            <Class name="com.cloudera.director.azure.compute.instance.VirtualMachine" />
+            <Class name="com.cloudera.director.azure.compute.instance.VirtualMachineScaleSetVM" />
+        </Or>
+    </Match>
 </FindBugsFilter>

@@ -17,11 +17,11 @@
 package com.cloudera.director.azure.compute.instance;
 
 import com.cloudera.director.azure.Configurations;
-import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.Property;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.Property;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
 import com.microsoft.azure.management.storage.SkuName;
 
 /**
@@ -41,11 +41,11 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
           "cloudera-centos-74-latest",
           "redhat-rhel-67-latest",
           "redhat-rhel-72-latest",
-          "redhat-rhel-74-latest",
-          "redhat-rhel-7-latest")
+          "redhat-rhel-74-latest")
       .defaultDescription("The VM image to deploy. This can be either the image alias " +
           "referencing an image in the configurable images file or an inline image description " +
           "in the format: /publisher/&lt;publisher&gt;/offer/&lt;offer&gt;/sku/&lt;sku&gt;/version/&lt;version&gt;.")
+      .defaultPlaceholder("Select VM image alias")
       .defaultErrorMessage("VM Image Alias is required.")
       .widget(ConfigurationProperty.Widget.OPENLIST)
       .required(true)
@@ -82,6 +82,7 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
           "STANDARD_GS4")
       .defaultDescription("The machine type.<br /><a target='_blank' " +
           "href='https://docs.microsoft.com/en-us/azure/virtual-machines/linux/sizes'>More Information</a>")
+      .defaultPlaceholder("Select VM size")
       .defaultErrorMessage("Virtual Machine Size is required.")
       .widget(ConfigurationProperty.Widget.OPENLIST)
       .required(true)
@@ -192,13 +193,15 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
       .addValidValues(
           "Yes",
           "No")
-      .defaultValue("No")
-      .defaultDescription("Whether to use Managed Disks. The Availability Set must be configured " +
-          "to use Managed Disks.<br /><a target='_blank' " +
+      .defaultValue("Yes")
+      .defaultDescription("Whether to use Managed Disks. Managed Disks are enabled by default " +
+          "and he Availability Set must be configured to use Managed Disks. " +
+          "To use Storage Accounts set this field to \"No\".<br /><a target='_blank' " +
           "href='https://docs.microsoft.com/en-us/azure/storage/storage-managed-disks-overview'>" +
           "More Information</a>")
       .widget(ConfigurationProperty.Widget.OPENLIST)
       .required(false)
+      .hidden(true)
       .build()),
 
   STORAGE_TYPE(new SimpleConfigurationPropertyBuilder()
@@ -309,6 +312,28 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
       .hidden(true)
       .build()),
 
+  CUSTOM_DATA_UNENCODED(new SimpleConfigurationPropertyBuilder()
+      .configKey("customDataUnencoded")
+      .name("Custom Data (unencoded)")
+      .defaultDescription("The Custom Data, unencoded. Custom data in this field will be " +
+          "Base64 encoded and the encoded string has a maximum length of 87380 characters.")
+      .required(false)
+      .sensitive(true)
+      .hidden(true)
+      .widget(ConfigurationProperty.Widget.TEXT)
+      .build()),
+
+  CUSTOM_DATA_ENCODED(new SimpleConfigurationPropertyBuilder()
+      .configKey("customDataEncoded")
+      .name("Custom Data (encoded)")
+      .defaultDescription("The Custom Data, Base64 encoded. Custom data in this field must be " +
+          "Base64 encoded with a maximum length of 87380 characters.")
+      .required(false)
+      .sensitive(true)
+      .hidden(true)
+      .widget(ConfigurationProperty.Widget.TEXT)
+      .build()),
+
   WITH_STATIC_PRIVATE_IP_ADDRESS(new SimpleConfigurationPropertyBuilder()
       .configKey("withStaticPrivateIpAddress")
       .name("With Static Private IP Address")
@@ -317,6 +342,19 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
           "Yes",
           "No")
       .defaultValue("Yes")
+      .widget(ConfigurationProperty.Widget.LIST)
+      .required(false)
+      .hidden(true)
+      .build()),
+
+  WITH_ACCELERATED_NETWORKING(new SimpleConfigurationPropertyBuilder()
+      .configKey("withAcceleratedNetworking")
+      .name("With Accelerated Networking")
+      .defaultDescription("Whether or not to enable Accelerated Networking.")
+      .addValidValues(
+          "Yes",
+          "No")
+      .defaultValue("No")
       .widget(ConfigurationProperty.Widget.LIST)
       .required(false)
       .hidden(true)

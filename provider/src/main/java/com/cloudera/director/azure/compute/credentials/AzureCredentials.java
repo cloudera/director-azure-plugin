@@ -16,10 +16,13 @@
 
 package com.cloudera.director.azure.compute.credentials;
 
+import static com.cloudera.director.azure.Configurations.AZURE_USER_AGENT_PREFIX;
+
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.InvalidCredentialsException;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.InvalidCredentialsException;
+import com.google.common.base.Strings;
 import com.microsoft.azure.AzureEnvironment;
 import com.microsoft.azure.credentials.ApplicationTokenCredentials;
 import com.microsoft.azure.management.Azure;
@@ -27,6 +30,7 @@ import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 import com.microsoft.azure.management.msi.implementation.MSIManager;
 
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +46,10 @@ public class AzureCredentials {
   private final ApplicationTokenCredentials credentials;
 
   private final String subId;
+  private final String userAgentPid;
+  private static final String UUID_REGEX =
+      "[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}";
+  private static final Pattern UUID_PATTERN = Pattern.compile(UUID_REGEX);
 
   /**
    * Builds credentials in a backwards compatible way by:
@@ -54,6 +62,24 @@ public class AzureCredentials {
    */
   public AzureCredentials(Configured config, LocalizationContext local) {
     LOG.info("Creating ApplicationTokenCredentials");
+
+    // set to the Cloudera Altus Director user-agent GUID by default
+    String userAgent = config.getConfigurationValue(AzureCredentialsConfiguration.USER_AGENT, local);
+
+    // validate the user-agent GUID
+    if (!Strings.isNullOrEmpty(userAgent) && UUID_PATTERN.matcher(userAgent).matches()) {
+      // set the user-agent if it's a valid GUID
+      this.userAgentPid = AZURE_USER_AGENT_PREFIX + userAgent;
+    } else if (!Strings.isNullOrEmpty(userAgent)) {
+      // error if the user-agent is set and invalid
+      throw new InvalidCredentialsException(String.format(
+          "The user-agent GUID %s is not a valid GUID; it must match the regex: %s",
+          userAgent,
+          UUID_REGEX));
+    } else {
+      // if the user-agent was purposefully set to empty-string then set it blank
+      userAgentPid = "";
+    }
 
     this.subId = config.getConfigurationValue(AzureCredentialsConfiguration.SUBSCRIPTION_ID, local);
     AzureEnvironment azureEnvironment;
@@ -98,13 +124,14 @@ public class AzureCredentials {
    * until it is used for a call that requires authentication (i.e. until calling a backend
    * service). This means that this method can't be used to test for valid credentials.
    *
-   * xxx/all - It is unknown how long this object stays authenticated for, if it gets automatically
+   * N.b. it is unknown how long this object stays authenticated for, if it gets automatically
    * refreshed, etc
    *
    * @return base Azure object used to access resource management APIs in Azure
    */
   public Azure authenticate() {
     return Azure.configure()
+        .withUserAgent(userAgentPid)
         .withConnectionTimeout(AzurePluginConfigHelper.getAzureSdkConnectionTimeout(),
             TimeUnit.SECONDS)
         .withReadTimeout(AzurePluginConfigHelper.getAzureSdkReadTimeout(), TimeUnit.SECONDS)

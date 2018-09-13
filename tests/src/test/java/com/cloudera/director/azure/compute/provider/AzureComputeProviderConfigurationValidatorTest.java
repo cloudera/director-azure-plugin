@@ -19,11 +19,11 @@ package com.cloudera.director.azure.compute.provider;
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.TestHelper;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.model.ConfigurationValidator;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.ConfigurationValidator;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 
 import java.util.Locale;
 import java.util.Map;

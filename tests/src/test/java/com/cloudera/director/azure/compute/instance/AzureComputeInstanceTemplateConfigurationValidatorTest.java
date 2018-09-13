@@ -16,9 +16,12 @@
 
 package com.cloudera.director.azure.compute.instance;
 
+import static com.cloudera.director.azure.Configurations.AZURE_CUSTOM_DATA_MAX_CHARACTERS;
+
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.TestHelper;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
+import com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.Page;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.PagedList;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
@@ -35,15 +38,18 @@ import com.cloudera.director.azure.shaded.com.microsoft.rest.RestException;
 import com.cloudera.director.azure.shaded.com.typesafe.config.Config;
 import com.cloudera.director.azure.shaded.com.typesafe.config.ConfigFactory;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate;
-import com.cloudera.director.spi.v1.model.InstanceTemplate;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.exception.ValidationException;
-import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate;
+import com.cloudera.director.spi.v2.model.InstanceTemplate;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.exception.ValidationException;
+import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.google.common.base.Strings;
+import com.google.common.io.BaseEncoding;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -935,10 +941,132 @@ public class AzureComputeInstanceTemplateConfigurationValidatorTest {
         Configurations.parseCustomImagePurchasePlanFromConfig(new SimpleConfiguration(map),
             localizationContext);
       } catch (ValidationException e) {
-        LOG.info("Expected exception: ", e);
+        LOG.info("Expected exception: {}", e.getMessage());
         caughtException = true;
       }
       Assert.assertTrue(caughtException);
     }
+  }
+
+  @Test
+  public void checkCustomDataUnencodedValidExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap()
+        .getConfigKey(), "");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap()
+        .getConfigKey(), TestHelper.TEST_CUSTOM_DATA_UNENCODED);
+
+    validator.checkCustomData(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkCustomDataEncodedValidExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap()
+        .getConfigKey(), TestHelper.TEST_CUSTOM_DATA_ENCODED);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap()
+        .getConfigKey(), "");
+
+    validator.checkCustomData(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkCustomDataBothSetExpectError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap()
+        .getConfigKey(), TestHelper.TEST_CUSTOM_DATA_ENCODED);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap()
+        .getConfigKey(), TestHelper.TEST_CUSTOM_DATA_UNENCODED);
+
+    validator.checkCustomData(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkCustomDataBothNullExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap()
+        .getConfigKey(), null);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap()
+        .getConfigKey(), null);
+
+    validator.checkCustomData(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkCustomDataBothEmptyStringExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap()
+        .getConfigKey(), "");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap()
+        .getConfigKey(), "");
+
+    validator.checkCustomData(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkCustomDataEncodedNotActuallyEncodedExpectError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap()
+        .getConfigKey(), TestHelper.TEST_CUSTOM_DATA_UNENCODED);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap()
+        .getConfigKey(), "");
+
+    validator.checkCustomData(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkCustomDataUnencodedTooLongAfterEncodedExpectError() throws Exception {
+    String reallyLongString = Strings.repeat("n", AZURE_CUSTOM_DATA_MAX_CHARACTERS + 1);
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap()
+        .getConfigKey(), "");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap()
+        .getConfigKey(), reallyLongString);
+
+    validator.checkCustomData(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void checkCustomDataEncodedTooLongExpectError() throws Exception {
+    String reallyLongEncodedString = BaseEncoding.base64().encode(
+        Strings.repeat("n", AZURE_CUSTOM_DATA_MAX_CHARACTERS + 1).getBytes(StandardCharsets.UTF_8));
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap()
+        .getConfigKey(), reallyLongEncodedString);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap()
+        .getConfigKey(), "");
+
+    validator.checkCustomData(new SimpleConfiguration(map), accumulator, localizationContext);
+    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+  }
+
+  @Test
+  public void parseYesNoWithDifferentCombinations() throws Exception {
+    // all forms of "yes" return true
+    Assert.assertTrue(AzureVirtualMachineMetadata.parseYesNo("Yes"));
+    Assert.assertTrue(AzureVirtualMachineMetadata.parseYesNo("yes"));
+    Assert.assertTrue(AzureVirtualMachineMetadata.parseYesNo("YES"));
+    Assert.assertTrue(AzureVirtualMachineMetadata.parseYesNo("yES"));
+
+    // all forms of "no" return false
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo("No"));
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo("no"));
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo("NO"));
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo("nO"));
+
+    // all other strings return false
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo(""));
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo(null));
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo("true"));
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo("false"));
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo("yes.")); // with period (.)
+    Assert.assertFalse(AzureVirtualMachineMetadata.parseYesNo("random string"));
   }
 }

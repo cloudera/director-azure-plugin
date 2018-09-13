@@ -18,10 +18,10 @@ package com.cloudera.director.azure;
 
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.ValidationException;
+import com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.ValidationException;
 import com.microsoft.azure.management.compute.ImageReference;
 import com.microsoft.azure.management.compute.PurchasePlan;
 import com.microsoft.azure.management.storage.SkuName;
@@ -40,6 +40,18 @@ import java.util.Map;
 public final class Configurations {
 
   /**
+   * The user-agent GUID must be in this form:
+   *   pid-GUID
+   * The "pid-" prefix is required from the Microsoft side.
+   */
+  public static final String AZURE_USER_AGENT_PREFIX = "pid-";
+
+  /**
+   * The Cloudera Altus Director user-agent GUID used to track usage from Cloudera.
+   */
+  public static final String AZURE_DEFAULT_USER_AGENT_GUID = "c1d2dcc3-5b9d-46b7-a678-8c8f982a08f8";
+
+  /**
    * The configuration file name.
    */
   public static final String AZURE_CONFIG_FILENAME = "azure-plugin.conf";
@@ -51,6 +63,8 @@ public final class Configurations {
   public static final String AZURE_CONFIG_PROVIDER_REGIONS = "supported-regions";
   public static final String AZURE_CONFIG_PROVIDER_BACKEND_OPERATION_POLLING_TIMEOUT_SECONDS =
       "azure-backend-operation-polling-timeout-second";
+  public static final String AZURE_CONFIG_PROVIDER_VMSS_OPERATION_TIMEOUT_SECONDS =
+      "azure-vmss-operation-timeout-second";
   public static final int MAX_TASKS_POLLING_TIMEOUT_SECONDS = 3600;
   public static final String AZURE_SDK_CONFIG_CONN_TIMEOUT_SECONDS =
       "azure-sdk-connection-timeout-seconds";
@@ -68,6 +82,7 @@ public final class Configurations {
   public static final String AZURE_CONFIG_DISALLOWED_USERNAMES = "azure-disallowed-usernames";
   public static final String AZURE_VALIDATE_RESOURCES = "azure-validate-resources";
   public static final String AZURE_VALIDATE_CREDENTIALS = "azure-validate-credentials";
+  public static final int AZURE_CUSTOM_DATA_MAX_CHARACTERS = 87380;
 
   /**
    * The configurable images file name.
@@ -78,10 +93,11 @@ public final class Configurations {
    * Elements that specifies am Azure VM Image, used as config keys to parse the configurable
    * images file.
    */
-  public static final String AZURE_IMAGE_PUBLISHER = "publisher";
-  public static final String AZURE_IMAGE_OFFER = "offer";
-  public static final String AZURE_IMAGE_SKU = "sku";
-  public static final String AZURE_IMAGE_VERSION = "version";
+  private static final String AZURE_IMAGE_PUBLISHER = "publisher";
+  private static final String AZURE_IMAGE_OFFER = "offer";
+  private static final String AZURE_IMAGE_SKU = "sku";
+  private static final String AZURE_IMAGE_VERSION = "version";
+  private static final String AZURE_CUSTOM_IMAGE_MARKER = "providers/Microsoft.Compute/images";
 
   /**
    * Defaults for Azure VM properties
@@ -162,10 +178,21 @@ public final class Configurations {
     final String imageMissingInConfigMsg = "Image '%s' does not exist in configurable image list.";
     final String imageConfigMissingRequiredFieldMsg = "Image '%s' config does not have all " +
         "required fields or fields are the wrong type. Check the configurable images file.";
+    final String imageMightBeCustom = "Image '%s' is referencing a Custom Image but not all required fields are set. " +
+        "To use Custom Images set the '" +
+        AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE.unwrap().getConfigKey() +
+        "' and '" +
+        AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_IMAGE_PLAN.unwrap().getConfigKey() +
+        "' fields.";
 
     String imageString = template.getConfigurationValue(
         ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
         localizationContext);
+
+    // they're trying to use a custom image if this is set
+    if (imageString.contains(AZURE_CUSTOM_IMAGE_MARKER)) {
+      throw new ValidationException(String.format(imageMightBeCustom, imageString));
+    }
 
     // see if the image follows the correct URI format
     String[] splitPath = imageString.split("/");

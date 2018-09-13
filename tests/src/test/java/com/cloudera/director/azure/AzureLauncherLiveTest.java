@@ -21,10 +21,10 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assume.assumeTrue;
 
 import com.cloudera.director.azure.compute.credentials.AzureCredentialsConfiguration;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.provider.CloudProvider;
-import com.cloudera.director.spi.v1.provider.CloudProviderMetadata;
-import com.cloudera.director.spi.v1.provider.Launcher;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.provider.CloudProvider;
+import com.cloudera.director.spi.v2.provider.CloudProviderMetadata;
+import com.cloudera.director.spi.v2.provider.Launcher;
 
 import java.io.File;
 import java.util.List;
@@ -62,7 +62,7 @@ public class AzureLauncherLiveTest {
     // See AzureCredentialsConfiguration
     List<ConfigurationProperty> credentialsConfigurationProperties = metadata
         .getCredentialsProviderMetadata().getCredentialsConfigurationProperties();
-    assertEquals(6, credentialsConfigurationProperties.size());
+    assertEquals(7, credentialsConfigurationProperties.size());
     assertTrue(credentialsConfigurationProperties.contains(
         AzureCredentialsConfiguration.AZURE_CLOUD_ENVIRONMENT.unwrap()));
     assertTrue(credentialsConfigurationProperties.contains(

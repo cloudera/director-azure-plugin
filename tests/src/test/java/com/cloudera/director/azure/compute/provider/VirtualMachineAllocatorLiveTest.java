@@ -18,18 +18,27 @@
 
 package com.cloudera.director.azure.compute.provider;
 
+import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getDnsName;
+import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getFirstGroupOfUuid;
+import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getVmName;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.spy;
+
 import com.cloudera.director.azure.AzureCloudProvider;
-import com.cloudera.director.azure.AzureLauncher;
 import com.cloudera.director.azure.CustomVmImageTestHelper;
 import com.cloudera.director.azure.TestHelper;
-import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty;
+import com.cloudera.director.azure.compute.instance.AzureInstance;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.AvailabilitySet;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.Disk;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.DiskSkuTypes;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.Network;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.NetworkInterface;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.NetworkSecurityGroup;
@@ -38,15 +47,13 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.resourc
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.SkuName;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.StorageAccountSkuType;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.StorageAccount;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
-import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.model.util.SimpleResourceTemplate;
-import com.cloudera.director.spi.v1.provider.CloudProvider;
-import com.cloudera.director.spi.v1.provider.Launcher;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
+import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.util.SimpleResourceTemplate;
+import com.cloudera.director.spi.v2.provider.CloudProvider;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -54,11 +61,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.BiFunction;
 
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
@@ -70,45 +76,16 @@ import org.slf4j.LoggerFactory;
  *
  * These tests are live tests with some sections mocked to inject faults that happen in actual use.
  */
-public class AzureComputeProviderFaultInjectionTest {
+public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTestBase {
 
   private static final Logger LOG =
-      LoggerFactory.getLogger(AzureComputeProviderFaultInjectionTest.class);
+      LoggerFactory.getLogger(VirtualMachineAllocatorLiveTest.class);
 
   // Fields used by checks
-  private static AzureCredentials credentials;
-  private static Azure azure;
   private static final String TEMPLATE_NAME = "LiveTestInstanceTemplate";
   private static final Map<String, String> TAGS = TestHelper.buildTagMap();
   private static final DefaultLocalizationContext DEFAULT_LOCALIZATION_CONTEXT =
       new DefaultLocalizationContext(Locale.getDefault(), "");
-
-
-  @BeforeClass
-  public static void createLiveTestResources() throws Exception {
-    LOG.info("createLiveTestResources");
-
-    Assume.assumeTrue(TestHelper.runLiveTests());
-
-    // initialize everything only if live check passes
-    Launcher launcher = new AzureLauncher();
-    launcher.initialize(new File("non_existent_file"), null);
-    credentials = TestHelper.getAzureCredentials();
-    azure = credentials.authenticate();
-    TestHelper.buildLiveTestEnvironment(credentials);
-  }
-
-  @AfterClass
-  public static void destroyLiveTestResources() throws Exception {
-    LOG.info("destroyLiveTestResources");
-    // this method is always called
-
-    // destroy everything only if live check passes
-    if (TestHelper.runLiveTests()) {
-      TestHelper.destroyLiveTestEnvironment(azure);
-    }
-  }
-
 
   @Test
   public void allocateMoreThanRequiredLessThanRequestedExpectSuccess() throws Exception {
@@ -116,17 +93,22 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 0. set up
     LOG.info("0. set up");
-    Launcher launcher = new AzureLauncher();
-    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
         TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
 
     // spy on AzureComputeProvider
-    AzureComputeProvider provider = Mockito.spy((AzureComputeProvider)
-        cloudProvider.createResourceProvider(AzureComputeProvider.METADATA.getId(),
-            TestHelper.buildValidDirectorLiveTestConfig()));
+    SimpleConfiguration config = TestHelper.buildValidDirectorLiveTestConfig();
+    AzureComputeProvider provider = spy((AzureComputeProvider)
+        cloudProvider.createResourceProvider(AzureComputeProvider.METADATA.getId(), config));
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
-        TestHelper.buildValidDirectorLiveTestConfig(), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+        config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+    VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
+        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+
+    doReturn(allocator)
+        .when(provider)
+        .createInstanceAllocator(
+            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
 
     // the three VMs to use for this test
     Collection<String> instanceIds = new ArrayList<>();
@@ -138,14 +120,15 @@ public class AzureComputeProviderFaultInjectionTest {
     // cause one create to fail
     Mockito.doThrow(new RuntimeException("Force failure."))
         .doCallRealMethod() // real method called for the rest
-        .when(provider)
+        .when(allocator)
         .buildVirtualMachineCreatable(
-            ArgumentMatchers.any(Azure.class),
-            ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
+            any(Azure.class),
+            any(LocalizationContext.class),
+            any(AzureComputeInstanceTemplate.class),
             ArgumentMatchers.anyString(),
-            ArgumentMatchers.any(AvailabilitySet.class),
-            ArgumentMatchers.any(Network.class),
-            ArgumentMatchers.any(NetworkSecurityGroup.class));
+            any(AvailabilitySet.class),
+            any(Network.class),
+            any(NetworkSecurityGroup.class));
 
 
     // 1. allocate
@@ -162,127 +145,13 @@ public class AzureComputeProviderFaultInjectionTest {
   }
 
   @Test
-  public void allocateWithDirector25NamingSchemeExpectNoResourcesLeaked() throws Exception {
-    LOG.info("allocateWithDirector25NamingSchemeExpectNoResourcesLeaked");
-
-    LOG.info("0. set up");
-    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET.unwrap()
-        .getConfigKey(), TestHelper.TEST_AVAILABILITY_SET_UNMANAGED);
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
-        "No");
-    SimpleConfiguration config = new SimpleConfiguration(map);
-
-    Launcher launcher = new AzureLauncher();
-    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
-        TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
-
-    AzureComputeProvider provider = Mockito.spy((AzureComputeProvider) cloudProvider.createResourceProvider(
-        AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig()));
-    AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
-        config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
-
-    // the single VM to use for this test
-    String instanceId = UUID.randomUUID().toString();
-    Collection<String> instanceIds = new ArrayList<>();
-    instanceIds.add(instanceId);
-    LOG.info("Using these UUIDs: {}", Arrays.toString(instanceIds.toArray()));
-
-    LOG.info("1. allocate");
-    // custom Storage Account
-    String uniqueSaName = AzureComputeProvider.getFirstGroupOfUuid(UUID.randomUUID().toString());
-    StorageAccount.DefinitionStages.WithCreate storageAccountCreatable = azure
-        .storageAccounts()
-        .define(uniqueSaName)
-        .withRegion(TestHelper.TEST_REGION)
-        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
-        .withSku(StorageAccountSkuType.PREMIUM_LRS);
-    Mockito.doReturn(storageAccountCreatable)
-        .when(provider)
-        .buildStorageAccountCreatable(
-            Mockito.any(Azure.class),
-            Mockito.any(AzureComputeInstanceTemplate.class),
-            ArgumentMatchers.anyString());
-
-    // custom Public IP
-    String uniquePipUuid = UUID.randomUUID().toString();
-    String uniquePipName = AzureComputeProvider.getFirstGroupOfUuid(uniquePipUuid);
-    PublicIPAddress.DefinitionStages.WithCreate publicIpCreatable = azure
-        .publicIPAddresses()
-        .define(uniquePipName)
-        .withRegion(TestHelper.TEST_REGION)
-        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
-        .withLeafDomainLabel(AzureComputeProvider.getDnsName(uniquePipUuid, template.getInstanceNamePrefix()));
-    Mockito.doReturn(publicIpCreatable)
-        .when(provider)
-        .buildPublicIpCreatable(
-            Mockito.any(Azure.class),
-            Mockito.any(AzureComputeInstanceTemplate.class),
-            ArgumentMatchers.anyString(),
-            ArgumentMatchers.anyString());
-
-    // custom Network Interface
-    String uniqueNicName = AzureComputeProvider.getFirstGroupOfUuid(UUID.randomUUID().toString());
-    Network vnet = azure.networks().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, TestHelper.TEST_VIRTUAL_NETWORK);
-    NetworkSecurityGroup nsg = azure.networkSecurityGroups()
-        .getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, TestHelper.TEST_NETWORK_SECURITY_GROUP);
-    NetworkInterface.DefinitionStages.WithCreate nicCreatable = azure
-        .networkInterfaces()
-        .define(uniqueNicName)
-        .withRegion(TestHelper.TEST_REGION)
-        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
-        .withExistingPrimaryNetwork(vnet)
-        .withSubnet("default")
-        // AZURE_SDK there is no way to set the IP allocation method to static
-        .withPrimaryPrivateIPAddressDynamic()
-        .withExistingNetworkSecurityGroup(nsg);
-    if (map.get(AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP.unwrap().getConfigKey()).equals("Yes")) {
-      nicCreatable = nicCreatable.withNewPrimaryPublicIPAddress(publicIpCreatable);
-    }
-    Mockito.doReturn(nicCreatable)
-        .when(provider)
-        .buildNicCreatable(
-            Mockito.any(Azure.class),
-            Mockito.any(AzureComputeInstanceTemplate.class),
-            ArgumentMatchers.anyString(),
-            Mockito.any(Network.class),
-            Mockito.any(NetworkSecurityGroup.class),
-            ArgumentMatchers.anyString());
-
-    provider.allocate(template, instanceIds, instanceIds.size());
-
-    LOG.info("2. verify that the custom resources with unique names exist");
-    StorageAccount sa = azure.storageAccounts().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueSaName);
-    Assert.assertNotNull(sa);
-    NetworkInterface ni = azure.networkInterfaces().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueNicName);
-    Assert.assertNotNull(ni);
-    PublicIPAddress pip = azure.publicIPAddresses().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniquePipName);
-    Assert.assertNotNull(pip);
-
-
-    LOG.info("3. delete");
-    provider.delete(template, instanceIds);
-
-    LOG.info("4. verify that the custom resources with unique names have been deleted");
-    sa = azure.storageAccounts().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueSaName);
-    Assert.assertNull(sa);
-    ni = azure.networkInterfaces().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueNicName);
-    Assert.assertNull(ni);
-    pip = azure.publicIPAddresses().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniquePipName);
-    Assert.assertNull(pip);
-  }
-
-  @Test
   public void allocateLessThanRequiredExpectNoResourceLeaked() throws Exception {
     LOG.info("allocateLessThanRequiredExpectNoResourceLeaked");
 
     // 0. set up
     LOG.info("0. set up");
-    Launcher launcher = new AzureLauncher();
     // so we default to azure-plugin.conf
-    launcher.initialize(new File("non_existent_file"), null);
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
         TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
     AzureComputeProvider provider = (AzureComputeProvider)
         cloudProvider.createResourceProvider(AzureComputeProvider.METADATA.getId(),
@@ -312,6 +181,126 @@ public class AzureComputeProviderFaultInjectionTest {
     // 2. verify no instances were created
     LOG.info("2. verify successful instance count");
     Assert.assertTrue(provider.find(template, instanceIds).size() == 0);
+  }
+
+  @Test
+  public void allocateWithDirector25NamingSchemeExpectNoResourcesLeaked() throws Exception {
+    LOG.info("allocateWithDirector25NamingSchemeExpectNoResourcesLeaked");
+
+    LOG.info("0. set up");
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET.unwrap()
+        .getConfigKey(), TestHelper.TEST_AVAILABILITY_SET_UNMANAGED);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
+        "No");
+    SimpleConfiguration config = new SimpleConfiguration(map);
+
+    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
+        config, Locale.getDefault());
+    AzureComputeProvider provider = spy((AzureComputeProvider) cloudProvider.createResourceProvider(
+        AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig()));
+    AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
+        config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+    VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
+        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+    doReturn(allocator)
+        .when(provider)
+        .createInstanceAllocator(
+            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
+
+    // the single VM to use for this test
+    String instanceId = UUID.randomUUID().toString();
+    Collection<String> instanceIds = new ArrayList<>();
+    instanceIds.add(instanceId);
+    LOG.info("Using these UUIDs: {}", Arrays.toString(instanceIds.toArray()));
+
+    LOG.info("1. allocate");
+    // custom Storage Account
+    String uniqueSaName = getFirstGroupOfUuid(UUID.randomUUID().toString());
+    StorageAccount.DefinitionStages.WithCreate storageAccountCreatable = azure
+        .storageAccounts()
+        .define(uniqueSaName)
+        .withRegion(TestHelper.TEST_REGION)
+        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
+        .withSku(StorageAccountSkuType.PREMIUM_LRS);
+    doReturn(storageAccountCreatable)
+        .when(allocator)
+        .buildStorageAccountCreatable(
+            any(Azure.class),
+            any(LocalizationContext.class),
+            any(AzureComputeInstanceTemplate.class),
+            ArgumentMatchers.anyString());
+
+    // custom Public IP
+    String uniquePipUuid = UUID.randomUUID().toString();
+    String uniquePipName = getFirstGroupOfUuid(uniquePipUuid);
+    PublicIPAddress.DefinitionStages.WithCreate publicIpCreatable = azure
+        .publicIPAddresses()
+        .define(uniquePipName)
+        .withRegion(TestHelper.TEST_REGION)
+        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
+        .withLeafDomainLabel(getDnsName(uniquePipUuid, template.getInstanceNamePrefix()));
+    doReturn(publicIpCreatable)
+        .when(allocator)
+        .buildPublicIpCreatable(
+            any(Azure.class),
+            any(LocalizationContext.class),
+            any(AzureComputeInstanceTemplate.class),
+            ArgumentMatchers.anyString(),
+            ArgumentMatchers.anyString());
+
+    // custom Network Interface
+    String uniqueNicName = getFirstGroupOfUuid(UUID.randomUUID().toString());
+    Network vnet = azure.networks().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, TestHelper.TEST_VIRTUAL_NETWORK);
+    NetworkSecurityGroup nsg = azure.networkSecurityGroups().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, TestHelper.TEST_NETWORK_SECURITY_GROUP);
+    NetworkInterface.DefinitionStages.WithCreate nicCreatable = azure
+        .networkInterfaces()
+        .define(uniqueNicName)
+        .withRegion(TestHelper.TEST_REGION)
+        .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
+        .withExistingPrimaryNetwork(vnet)
+        .withSubnet("default")
+        // AZURE_SDK there is no way to set the IP allocation method to static
+        .withPrimaryPrivateIPAddressDynamic()
+        .withExistingNetworkSecurityGroup(nsg);
+    if (map.get(AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP.unwrap().getConfigKey()).equals("Yes")) {
+        nicCreatable = nicCreatable.withNewPrimaryPublicIPAddress(publicIpCreatable);
+    }
+    doReturn(nicCreatable)
+        .when(allocator)
+        .buildNicCreatable(
+            any(Azure.class),
+            any(LocalizationContext.class),
+            any(AzureComputeInstanceTemplate.class),
+            ArgumentMatchers.anyString(),
+            any(Network.class),
+            any(NetworkSecurityGroup.class),
+            ArgumentMatchers.anyString());
+
+    Collection<? extends AzureComputeInstance<?>> allocatedInstances =
+        provider.allocate(template, instanceIds, instanceIds.size());
+    // verify that allocate returns a correctly sized list
+    Assert.assertEquals(instanceIds.size(), allocatedInstances.size());
+
+    LOG.info("2. verify that the custom resources with unique names exist");
+    StorageAccount sa = azure.storageAccounts().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueSaName);
+    Assert.assertNotNull(sa);
+    NetworkInterface ni = azure.networkInterfaces().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueNicName);
+    Assert.assertNotNull(ni);
+    PublicIPAddress pip = azure.publicIPAddresses().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniquePipName);
+    Assert.assertNotNull(pip);
+
+
+    LOG.info("3. delete");
+    provider.delete(template, instanceIds);
+
+    LOG.info("4. verify that the custom resources with unique names have been deleted");
+    sa = azure.storageAccounts().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueSaName);
+    Assert.assertNull(sa);
+    ni = azure.networkInterfaces().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniqueNicName);
+    Assert.assertNull(ni);
+    pip = azure.publicIPAddresses().getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, uniquePipName);
+    Assert.assertNull(pip);
   }
 
   @Test
@@ -386,18 +375,24 @@ public class AzureComputeProviderFaultInjectionTest {
           AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
           "No");
     }
+    SimpleConfiguration config = new SimpleConfiguration(map);
 
-    Launcher launcher = new AzureLauncher();
-    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
         new SimpleConfiguration(map), Locale.getDefault());
 
     // spy on AzureComputeProvider
-    AzureComputeProvider provider = Mockito.spy((AzureComputeProvider)
+    AzureComputeProvider provider = spy((AzureComputeProvider)
         cloudProvider.createResourceProvider(
-            AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig()));
+            AzureComputeProvider.METADATA.getId(), config));
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
-        new SimpleConfiguration(map), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+        config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+    VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
+        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+
+    doReturn(allocator)
+        .when(provider)
+        .createInstanceAllocator(
+            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
 
     // the three VMs to use for this test
     Collection<String> instanceIds = new ArrayList<>();
@@ -411,58 +406,67 @@ public class AzureComputeProviderFaultInjectionTest {
       // throw on the first call then default to calling the actual method for the rest
       Mockito.doThrow(new RuntimeException("Force failure."))
           .doCallRealMethod()
-          .when(provider)
+          .when(allocator)
           .buildVirtualMachineCreatable(
-              ArgumentMatchers.any(Azure.class),
-              ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
               ArgumentMatchers.anyString(),
-              ArgumentMatchers.any(AvailabilitySet.class),
-              ArgumentMatchers.any(Network.class),
-              ArgumentMatchers.any(NetworkSecurityGroup.class));
+              any(AvailabilitySet.class),
+              any(Network.class),
+              any(NetworkSecurityGroup.class));
     }
 
     if (failNic) {
       // throw on the first call then default to calling the actual method for the rest
       Mockito.doThrow(new RuntimeException("Force failure."))
           .doCallRealMethod()
-          .when(provider).buildNicCreatable(
-          ArgumentMatchers.any(Azure.class),
-          ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
-          ArgumentMatchers.anyString(),
-          ArgumentMatchers.any(Network.class),
-          ArgumentMatchers.any(NetworkSecurityGroup.class),
-          ArgumentMatchers.anyString());
+          .when(allocator)
+          .buildNicCreatable(
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
+              ArgumentMatchers.anyString(),
+              any(Network.class),
+              any(NetworkSecurityGroup.class),
+              ArgumentMatchers.anyString());
     }
 
     if (failPublicIp) {
       // throw on the first call then default to calling the actual method for the rest
       Mockito.doThrow(new RuntimeException("Force failure."))
           .doCallRealMethod()
-          .when(provider).buildPublicIpCreatable(
-          ArgumentMatchers.any(Azure.class),
-          ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
-          ArgumentMatchers.anyString(),
-          ArgumentMatchers.anyString());
+          .when(allocator)
+          .buildPublicIpCreatable(
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
+              ArgumentMatchers.anyString(),
+              ArgumentMatchers.anyString());
     }
 
     if (failManagedDisks) {
       // throw on the first call then default to calling the actual method for the rest
       Mockito.doThrow(new RuntimeException("Force failure."))
           .doCallRealMethod()
-          .when(provider).buildManagedDiskCreatable(
-          ArgumentMatchers.any(Azure.class),
-          ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
-          ArgumentMatchers.anyString());
+          .when(allocator)
+          .buildManagedDiskCreatable(
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
+              ArgumentMatchers.anyString());
     }
 
     if (failStorageAccount) {
       // throw on the first call then default to calling the actual method for the rest
       Mockito.doThrow(new RuntimeException("Force failure."))
           .doCallRealMethod()
-          .when(provider).buildStorageAccountCreatable(
-          ArgumentMatchers.any(Azure.class),
-          ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
-          ArgumentMatchers.anyString());
+          .when(allocator)
+          .buildStorageAccountCreatable(
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
+              ArgumentMatchers.anyString());
     }
 
     // 1. allocate - everything should clean up automatically
@@ -484,9 +488,9 @@ public class AzureComputeProviderFaultInjectionTest {
         templateLocalizationContext);
 
     for (String instanceId : instanceIds) {
-      String commonResourceNamePrefix = AzureComputeProvider.getFirstGroupOfUuid(instanceId);
+      String commonResourceNamePrefix = getFirstGroupOfUuid(instanceId);
       // vm
-      String vmName = AzureComputeProvider.getVmName(instanceId, template.getInstanceNamePrefix());
+      String vmName = getVmName(instanceId, template.getInstanceNamePrefix());
       if (azure.virtualMachines().getByResourceGroup(rgName, instanceId) != null) {
         LOG.error("Failed to clean up VM {}", vmName);
         cleanedUp = false;
@@ -617,18 +621,24 @@ public class AzureComputeProviderFaultInjectionTest {
           AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
           "No");
     }
+    SimpleConfiguration config = new SimpleConfiguration(map);
 
-    Launcher launcher = new AzureLauncher();
-    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
-        new SimpleConfiguration(map), Locale.getDefault());
+    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
+        config, Locale.getDefault());
 
     // spy on AzureComputeProvider
-    AzureComputeProvider provider = Mockito.spy((AzureComputeProvider)
+    AzureComputeProvider provider = spy((AzureComputeProvider)
         cloudProvider.createResourceProvider(AzureComputeProvider.METADATA.getId(),
-            TestHelper.buildValidDirectorLiveTestConfig()));
+            config));
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
-        new SimpleConfiguration(map), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+        config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+    VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
+        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+
+    doReturn(allocator)
+        .when(provider)
+        .createInstanceAllocator(
+            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
 
     // 1. allocate one instance
     LOG.info("1. allocate");
@@ -663,18 +673,20 @@ public class AzureComputeProviderFaultInjectionTest {
     if (failManagedDisks) {
       Disk.DefinitionStages.WithCreate mdCreatable = azure
           .disks()
-          .define(AzureComputeProvider.getFirstGroupOfUuid(firstPassId) + "-0")
+          .define(getFirstGroupOfUuid(firstPassId) + "-0")
           .withRegion(TestHelper.TEST_REGION)
           .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
           .withData()
           .withSizeInGB(512)
           .withSku(DiskSkuTypes.PREMIUM_LRS);
 
-      Mockito.doReturn(mdCreatable)
-          .when(provider).buildManagedDiskCreatable(
-          ArgumentMatchers.any(Azure.class),
-          ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
-          ArgumentMatchers.anyString());
+      doReturn(mdCreatable)
+          .when(allocator)
+          .buildManagedDiskCreatable(
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
+              ArgumentMatchers.anyString());
     }
 
     // fail storage account create by having it use an invalid name (Storage account name must be
@@ -687,11 +699,13 @@ public class AzureComputeProviderFaultInjectionTest {
           .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
           .withSku(SkuName.PREMIUM_LRS);
 
-      Mockito.doReturn(storageAccountCreatable)
-          .when(provider).buildStorageAccountCreatable(
-          ArgumentMatchers.any(Azure.class),
-          ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
-          ArgumentMatchers.anyString());
+      doReturn(storageAccountCreatable)
+          .when(allocator)
+          .buildStorageAccountCreatable(
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
+              ArgumentMatchers.anyString());
     }
 
     // fail nic create by having it use the same name as the existing nic
@@ -702,7 +716,7 @@ public class AzureComputeProviderFaultInjectionTest {
           TestHelper.TEST_RESOURCE_GROUP, TestHelper.TEST_NETWORK_SECURITY_GROUP);
       NetworkInterface.DefinitionStages.WithCreate nicCreatable = azure
           .networkInterfaces()
-          .define(AzureComputeProvider.getFirstGroupOfUuid(firstPassId))
+          .define(getFirstGroupOfUuid(firstPassId))
           .withRegion(TestHelper.TEST_REGION)
           .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
           .withExistingPrimaryNetwork(vnet)
@@ -715,35 +729,39 @@ public class AzureComputeProviderFaultInjectionTest {
       boolean createPublicIp = map.get(AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP
           .unwrap().getConfigKey()).equals("Yes");
       if (createPublicIp) {
-        nicCreatable = nicCreatable.withNewPrimaryPublicIPAddress(provider.buildPublicIpCreatable(
-            azure, template, secondPassId, AzureComputeProvider.getFirstGroupOfUuid(firstPassId)));
+        nicCreatable = nicCreatable.withNewPrimaryPublicIPAddress(allocator.buildPublicIpCreatable(
+            azure, provider.getLocalizationContext(), template, secondPassId, getFirstGroupOfUuid(firstPassId)));
       }
 
-      Mockito.doReturn(nicCreatable)
-          .when(provider).buildNicCreatable(
-          ArgumentMatchers.any(Azure.class),
-          ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
-          ArgumentMatchers.anyString(),
-          ArgumentMatchers.any(Network.class),
-          ArgumentMatchers.any(NetworkSecurityGroup.class),
-          ArgumentMatchers.anyString());
+      doReturn(nicCreatable)
+          .when(allocator)
+          .buildNicCreatable(
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
+              ArgumentMatchers.anyString(),
+              any(Network.class),
+              any(NetworkSecurityGroup.class),
+              ArgumentMatchers.anyString());
     }
 
     // fail public IP create by having it use the same name as the existing public IP
     if (failPublicIp) {
       PublicIPAddress.DefinitionStages.WithCreate publicIpCreatable = azure
           .publicIPAddresses()
-          .define(AzureComputeProvider.getFirstGroupOfUuid(firstPassId))
+          .define(getFirstGroupOfUuid(firstPassId))
           .withRegion(TestHelper.TEST_REGION)
           .withExistingResourceGroup(TestHelper.TEST_RESOURCE_GROUP)
-          .withLeafDomainLabel(AzureComputeProvider.getDnsName(firstPassId, template.getInstanceNamePrefix()));
+          .withLeafDomainLabel(getDnsName(firstPassId, template.getInstanceNamePrefix()));
 
-      Mockito.doReturn(publicIpCreatable)
-          .when(provider).buildPublicIpCreatable(
-          ArgumentMatchers.any(Azure.class),
-          ArgumentMatchers.any(AzureComputeInstanceTemplate.class),
-          ArgumentMatchers.anyString(),
-          ArgumentMatchers.anyString());
+      doReturn(publicIpCreatable)
+          .when(allocator)
+          .buildPublicIpCreatable(
+              any(Azure.class),
+              any(LocalizationContext.class),
+              any(AzureComputeInstanceTemplate.class),
+              ArgumentMatchers.anyString(),
+              ArgumentMatchers.anyString());
     }
 
     // call allocate for the second time, this time it will fail
@@ -758,7 +776,8 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 3. verify cleanup - no resources should be orphaned
     LOG.info("3. verify cleanup");
-    boolean cleanedUp = AzureComputeProviderLiveTestHelper.resourcesDeleted(azure, provider, template, secondPassInstanceIds);
+    boolean cleanedUp = AzureComputeProviderLiveTestHelper
+        .resourcesDeleted(azure, provider, template, secondPassInstanceIds);
     if (!cleanedUp) {
       LOG.error("Test did not clean up all resources.");
     }
@@ -789,18 +808,23 @@ public class AzureComputeProviderFaultInjectionTest {
     LOG.info("0. set up");
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT.unwrap().getConfigKey(), "1");
+    SimpleConfiguration config = new SimpleConfiguration(map);
 
-    Launcher launcher = new AzureLauncher();
-    launcher.initialize(new File("non_existent_file"), null); // so we default to azure-plugin.conf
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
-        new SimpleConfiguration(map), Locale.getDefault());
+    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
+        config, Locale.getDefault());
 
     // spy on AzureComputeProvider
-    AzureComputeProvider provider = Mockito.spy((AzureComputeProvider)
-        cloudProvider.createResourceProvider(AzureComputeProvider.METADATA.getId(),
-            TestHelper.buildValidDirectorLiveTestConfig()));
+    AzureComputeProvider provider = spy((AzureComputeProvider)
+        cloudProvider.createResourceProvider(AzureComputeProvider.METADATA.getId(), config));
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
-        new SimpleConfiguration(map), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+        config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
+    VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
+        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+
+    doReturn(allocator)
+        .when(provider)
+        .createInstanceAllocator(
+            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
 
     // 1. allocate one instance
     LOG.info("1. allocate");
@@ -816,18 +840,18 @@ public class AzureComputeProviderFaultInjectionTest {
     List<String> resourceIds = new ArrayList<>();
     resourceIds.add("/subscriptions/" + TestHelper.LIVE_TEST_SUBSCRIPTION_ID + "/resourceGroups/" +
         TestHelper.TEST_RESOURCE_GROUP + "/providers/Microsoft.Compute/disks/" +
-        AzureComputeProvider.getFirstGroupOfUuid(instanceId) + "-0");
+        getFirstGroupOfUuid(instanceId) + "-0");
 
-    boolean successful = provider.asyncDeleteByIdHelper(azure.disks(), "Managed Disks", resourceIds,
+    boolean successful = allocator.asyncDeleteByIdHelper(azure.disks(), "Managed Disks", resourceIds,
         deleteFailedBuilder);
     LOG.info(deleteFailedBuilder.toString());
 
     // 3. fake delete
     boolean deleteFailedOnPurpose = false;
-    Mockito.doReturn(false)
-        .when(provider)
-        .asyncDeleteByIdHelper(ArgumentMatchers.any(SupportsDeletingById.class), ArgumentMatchers.anyString(),
-            ArgumentMatchers.any(List.class), ArgumentMatchers.any(StringBuilder.class));
+    doReturn(false)
+        .when(allocator)
+        .asyncDeleteByIdHelper(any(SupportsDeletingById.class), ArgumentMatchers.anyString(),
+            any(List.class), any(StringBuilder.class));
 
     try {
       LOG.info("Fake delete.");
@@ -842,9 +866,9 @@ public class AzureComputeProviderFaultInjectionTest {
     // 4. actual delete
     LOG.info("Real delete.");
     Mockito.doCallRealMethod()
-        .when(provider)
-        .asyncDeleteByIdHelper(ArgumentMatchers.any(SupportsDeletingById.class), ArgumentMatchers.anyString(),
-            ArgumentMatchers.any(List.class), ArgumentMatchers.any(StringBuilder.class));
+        .when(allocator)
+        .asyncDeleteByIdHelper(any(SupportsDeletingById.class), ArgumentMatchers.anyString(),
+            any(List.class), any(StringBuilder.class));
 
     provider.delete(template, instanceIds);
 
@@ -895,9 +919,7 @@ public class AzureComputeProviderFaultInjectionTest {
     cfgMap.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
         customImageUri);
 
-    Launcher launcher = new AzureLauncher();
-    launcher.initialize(new File("non_existent_file"), null);
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
         TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
     AzureComputeProvider provider = (AzureComputeProvider) cloudProvider.createResourceProvider(
         AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig());
@@ -925,7 +947,7 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 2. verify that no instances can be found
     LOG.info("2. find");
-    Collection<AzureComputeInstance> foundInstances1 = provider.find(templateWithoutPlan,
+    Collection<? extends AzureComputeInstance<?>> foundInstances1 = provider.find(templateWithoutPlan,
         instanceIds);
     Assert.assertEquals(0, foundInstances1.size());
 
@@ -947,7 +969,7 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 5. verify that no instances can be found
     LOG.info("5. find");
-    Collection<AzureComputeInstance> foundInstances2 = provider.find(templateWithWrongPlan,
+    Collection<? extends AzureComputeInstance<?>> foundInstances2 = provider.find(templateWithWrongPlan,
         instanceIds);
     Assert.assertEquals(0, foundInstances2.size());
 
@@ -971,9 +993,7 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 0. set up
     LOG.info("0. set up");
-    Launcher launcher = new AzureLauncher();
-    launcher.initialize(new File("non_existent_file"), null);
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
+    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
         TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
     AzureComputeProvider provider = (AzureComputeProvider) cloudProvider.createResourceProvider(
         AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig());
@@ -1003,8 +1023,8 @@ public class AzureComputeProviderFaultInjectionTest {
 
     // 2. verify that no instance is created
     LOG.info("2. find");
-    ArrayList<AzureComputeInstance> foundInstances =
-        (ArrayList<AzureComputeInstance>) provider.find(template, instanceIds);
+    Collection<? extends AzureComputeInstance<? extends AzureInstance>> foundInstances =
+        provider.find(template, instanceIds);
     Assert.assertEquals(foundInstances.size(), 0);
 
     // 3. verify cleanup - no resources should be orphaned

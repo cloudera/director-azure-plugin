@@ -21,11 +21,11 @@ import com.cloudera.director.azure.compute.provider.AzureComputeProvider;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.AzureEnvironment;
 import com.cloudera.director.azure.shaded.com.typesafe.config.ConfigFactory;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.model.exception.InvalidCredentialsException;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.provider.CloudProvider;
-import com.cloudera.director.spi.v1.provider.Launcher;
-import com.cloudera.director.spi.v1.provider.ResourceProviderMetadata;
+import com.cloudera.director.spi.v2.model.exception.InvalidCredentialsException;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.provider.CloudProvider;
+import com.cloudera.director.spi.v2.provider.Launcher;
+import com.cloudera.director.spi.v2.provider.ResourceProviderMetadata;
 
 import java.io.File;
 import java.util.HashMap;

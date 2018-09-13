@@ -18,21 +18,31 @@
 
 package com.cloudera.director.azure.compute.provider;
 
-import com.cloudera.director.azure.AzureCloudProvider;
+import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
 import com.cloudera.director.azure.AzureLauncher;
 import com.cloudera.director.azure.TestHelper;
+import com.cloudera.director.azure.compute.credentials.AzureCredentials;
+import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.Disk;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachine;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.NetworkInterface;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.PublicIPAddress;
-import com.cloudera.director.spi.v1.provider.CloudProvider;
-import com.cloudera.director.spi.v1.provider.Launcher;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
+import com.cloudera.director.spi.v2.provider.Launcher;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 import org.junit.Assume;
 import org.junit.BeforeClass;
@@ -44,7 +54,7 @@ import org.slf4j.LoggerFactory;
  * Helper test that is used to clean up orphaned resources in a resource group. Orphaned resources
  * are Managed Disks, NICs, PublicIPs that are not attached to a VM.
  *
- * Can also be used to delete VM and it's relevant resources with a specific tag (key/value pair).
+ * Can also be used to delete VM/VMSS and its relevant resources with a specific tag (key/value pair).
  *
  * NOTE:
  * - This test does not detect/delete orphaned storage accounts.
@@ -69,6 +79,7 @@ import org.slf4j.LoggerFactory;
  * -Dtest.azure.resourceCleanupVmTagName=TagName
  * -Dtest.azure.resourceCleanupVmTagValue=TagValue
  */
+
 public class AzureComputeProviderDeleteOrphanedResourcesTest {
 
   private static final Logger LOG =
@@ -92,23 +103,39 @@ public class AzureComputeProviderDeleteOrphanedResourcesTest {
     LOG.info("orphanedResourceCleanupUtil");
 
     String resourceGroupName = TestHelper.TEST_RESOURCE_GROUP;
-    ArrayList<String> resourceIds = new ArrayList<>();
-    ArrayList<String> vmIds = new ArrayList<>();
 
-    Azure azure = TestHelper.getAzureCredentials().authenticate();
+    AzureCredentials credentials = TestHelper.getAzureCredentials();
+    Azure azure = credentials.authenticate();
 
     Launcher launcher = new AzureLauncher();
     launcher.initialize(new File("non_existent_file"), null);
-    CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
-        TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
-    AzureComputeProvider provider = (AzureComputeProvider) cloudProvider.createResourceProvider(
-        AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig());
+
+    String tagName = TestHelper.resourceCleanupVmTagName();
+    String tagValue = TestHelper.resourceCleanupVmTagValue();
+
+    cleanUpVirtualMachines(azure, credentials, resourceGroupName, tagName, tagValue);
+    cleanUpVirtualMachineScaleSets(azure, credentials, resourceGroupName, tagName, tagValue);
+  }
+
+  private static void cleanUpVirtualMachines(
+      Azure azure,
+      AzureCredentials credentials,
+      String resourceGroupName,
+      String tagName,
+      String tagValue) {
+
+    VirtualMachineAllocator allocator = new VirtualMachineAllocator(
+        azure,
+        credentials.getGraphRbacManager(),
+        credentials.getMsiManager(),
+        (property, context) -> "");
+
+    ArrayList<String> resourceIds = new ArrayList<>();
+    ArrayList<String> vmIds = new ArrayList<>();
 
     StringBuilder deleteFailedBuilder = new StringBuilder(
         String.format("Delete Failure - not all resources deleted: "));
 
-    String tagName = TestHelper.resourceCleanupVmTagName();
-    String tagValue = TestHelper.resourceCleanupVmTagValue();
 
     // List all VMs in the RG, delete failed one and ones with specific tag/value pair
     // NOTE: we only delete failed VMs but not old VMs. There may be some long-lived VM in the RG
@@ -130,13 +157,13 @@ public class AzureComputeProviderDeleteOrphanedResourcesTest {
     }
     if (!resourceIds.isEmpty()) {
       LOG.info("Delete failed VMs: {}", resourceIds);
-      provider.asyncDeleteByIdHelper(azure.virtualMachines(), "Virtual Machines",
+      allocator.asyncDeleteByIdHelper(azure.virtualMachines(), "Virtual Machines",
           resourceIds, deleteFailedBuilder);
       resourceIds.clear();
     }
     if (!vmIds.isEmpty()) {
       LOG.info("Delete VMs with tag key/value pair {}/{} : {}", tagName, tagValue, vmIds);
-      provider.asyncDeleteByIdHelper(azure.virtualMachines(), "Virtual Machines",
+      allocator.asyncDeleteByIdHelper(azure.virtualMachines(), "Virtual Machines",
           vmIds, deleteFailedBuilder);
     }
 
@@ -149,7 +176,7 @@ public class AzureComputeProviderDeleteOrphanedResourcesTest {
     }
     if (!resourceIds.isEmpty()) {
       LOG.info("Delete orphaned Disks");
-      provider.asyncDeleteByIdHelper(azure.disks(), "Managed Disks", resourceIds,
+      allocator.asyncDeleteByIdHelper(azure.disks(), "Managed Disks", resourceIds,
           deleteFailedBuilder);
       resourceIds.clear();
     }
@@ -163,7 +190,7 @@ public class AzureComputeProviderDeleteOrphanedResourcesTest {
     }
     if (!resourceIds.isEmpty()) {
       LOG.info("Delete orphaned NICs");
-      provider.asyncDeleteByIdHelper(azure.networkInterfaces(), "Network Interfaces",
+      allocator.asyncDeleteByIdHelper(azure.networkInterfaces(), "Network Interfaces",
           resourceIds, deleteFailedBuilder);
       resourceIds.clear();
     }
@@ -177,9 +204,42 @@ public class AzureComputeProviderDeleteOrphanedResourcesTest {
     }
     if (!resourceIds.isEmpty()) {
       LOG.info("Delete orphaned PublicIPs");
-      provider.asyncDeleteByIdHelper(azure.publicIPAddresses(), "Public IPs",
+      allocator.asyncDeleteByIdHelper(azure.publicIPAddresses(), "Public IPs",
           resourceIds, deleteFailedBuilder);
       resourceIds.clear();
     }
+  }
+
+  private static void cleanUpVirtualMachineScaleSets(
+      Azure azure,
+      AzureCredentials credentials,
+      String resourceGroupName,
+      String tagName,
+      String tagValue) {
+
+    VirtualMachineScaleSetAllocator allocator = new VirtualMachineScaleSetAllocator(
+        azure, credentials.getMsiManager(), (p, c) -> "");
+
+    AzureComputeInstanceTemplate template = mock(AzureComputeInstanceTemplate.class);
+    when(template.getConfigurationValue(eq(COMPUTE_RESOURCE_GROUP), any(LocalizationContext.class)))
+        .thenReturn(resourceGroupName);
+
+    azure.virtualMachineScaleSets().listByResourceGroup(resourceGroupName)
+        .stream()
+        .filter(vmss -> vmss.tags() != null && tagName != null && Objects.equals(vmss.tags().get(tagName), tagValue))
+        .forEach(vmss -> {
+          LOG.info("Deleting virtual machine scale set {} with tag {} -> {}", vmss.name(), tagName, tagValue);
+          when(template.getGroupId()).thenReturn(vmss.name());
+
+          try {
+            allocator.delete(
+                new DefaultLocalizationContext(Locale.getDefault(), ""),
+                template,
+                Collections.emptyList());
+            LOG.info("Virtual machine scale set {} has been deleted", vmss.name());
+          } catch (InterruptedException e) {
+            LOG.warn("Virtual machine scale set {} might not have been deleted", vmss.name(), e);
+          }
+        });
   }
 }

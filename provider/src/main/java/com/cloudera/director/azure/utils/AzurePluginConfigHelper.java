@@ -456,6 +456,19 @@ public class AzurePluginConfigHelper {
   }
 
   /**
+   * Helper function to get Azure vmss timeout value (in seconds) from plugin config.
+   *
+   * @return Azure vmss timeout value (in seconds) from plugin config
+   */
+  public static synchronized long getVMSSOpTimeout() {
+    Config providerConfig = azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_PROVIDER);
+    long timeoutInSec = providerConfig.hasPath(Configurations.AZURE_CONFIG_PROVIDER_VMSS_OPERATION_TIMEOUT_SECONDS) ?
+        providerConfig.getLong(Configurations.AZURE_CONFIG_PROVIDER_VMSS_OPERATION_TIMEOUT_SECONDS) :
+        getAzureBackendOpPollingTimeOut();
+    return timeoutInSec < 0 ? Long.MAX_VALUE : timeoutInSec;
+  }
+
+  /**
    * Helper function to get Azure SDK connection timeout value (in seconds) from plugin config.
    *
    * @return Azure SDK connection timeout value (in seconds)

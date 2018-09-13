@@ -25,15 +25,16 @@ import com.cloudera.director.azure.TestHelper;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationValidator;
 import com.cloudera.director.azure.shaded.com.typesafe.config.ConfigFactory;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.model.util.DefaultConfigurationValidator;
-import com.cloudera.director.spi.v1.provider.CloudProvider;
-import com.cloudera.director.spi.v1.provider.Launcher;
+import com.cloudera.director.spi.v2.model.util.DefaultConfigurationValidator;
+import com.cloudera.director.spi.v2.provider.CloudProvider;
+import com.cloudera.director.spi.v2.provider.Launcher;
 
 import java.io.File;
 import java.util.Locale;
 import java.util.Map;
 
 import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -42,6 +43,7 @@ import org.junit.Test;
 public class AzureComputeProviderTest {
 
   @After
+  @Before
   public void reset() throws Exception {
     TestHelper.setAzurePluginConfigNull();
     TestHelper.setConfigurableImagesNull();

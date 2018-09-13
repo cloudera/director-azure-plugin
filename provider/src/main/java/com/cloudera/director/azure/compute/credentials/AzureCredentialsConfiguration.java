@@ -16,9 +16,11 @@
 
 package com.cloudera.director.azure.compute.credentials;
 
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import static com.cloudera.director.azure.Configurations.AZURE_DEFAULT_USER_AGENT_GUID;
+
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
 
 /**
  * Configuration properties needed to create AzureCredentials.
@@ -81,6 +83,16 @@ public enum AzureCredentialsConfiguration implements ConfigurationPropertyToken 
       .name("(DEPRECATED) Management URL")
       .defaultDescription("(DEPRECATED) Management URL; use Azure Cloud Environment instead.")
       .defaultErrorMessage("Management URL is DEPRECATED; use Azure Cloud Environment instead.")
+      .required(false)
+      .hidden(true)
+      .build()),
+
+  USER_AGENT(new SimpleConfigurationPropertyBuilder()
+      .configKey("userAgent")
+      .name("user-agent GUID")
+      .defaultDescription("Azure user-agent GUID (UUID).")
+      .defaultErrorMessage("user-agent GUID error; using the default user-agent GUID.")
+      .defaultValue(AZURE_DEFAULT_USER_AGENT_GUID)
       .required(false)
       .hidden(true)
       .build());

@@ -24,13 +24,15 @@ import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
 import com.cloudera.director.azure.shaded.com.typesafe.config.ConfigFactory;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.provider.Launcher;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionCondition;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.provider.Launcher;
 
 import java.io.File;
+import java.util.Collection;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -116,7 +118,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.validate(null, TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
         localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -127,7 +129,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkComputeResourceGroup(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -144,7 +146,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "fake-subnet");
 
     validator.checkNetwork(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -155,7 +157,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         .unwrap().getConfigKey(), "fake-virtual-network-resource-group");
 
     validator.checkNetwork(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -166,7 +168,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         .getConfigKey(), "fake-virtual-network");
 
     validator.checkNetwork(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -176,7 +178,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkNetwork(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -187,7 +189,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "fake-subnet");
 
     validator.checkNetwork(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -199,7 +201,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkNetworkSecurityGroupResourceGroup(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -211,7 +213,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkNetworkSecurityGroup(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -223,7 +225,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkNetworkSecurityGroup(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -234,7 +236,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -243,7 +245,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkAvailabilitySetAndManagedDisks(TestHelper.buildValidDirectorLiveTestConfig(),
         accumulator, localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -255,7 +257,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -268,7 +270,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -281,7 +283,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -294,7 +296,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(2, accumulator.getConditionsByKey().size());
+    assertPluginConditions(2);
   }
 
   @Test
@@ -307,14 +309,14 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(2, accumulator.getConditionsByKey().size());
+    assertPluginConditions(2);
   }
 
   @Test
   public void checkVmImageWithValidImageLatestVersionExpectNoErrors() throws Exception {
     validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -324,7 +326,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "/publisher/cloudera/offer/cloudera-centos-os/sku/7_2/version/latest");
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -334,7 +336,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "/publisher/cloudera/offer/cloudera-centos-os/sku/6_7/version/1.0.0");
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -350,7 +352,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -370,14 +372,14 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
   public void checkVMSizeWithValidTemplateExpectNoError() throws Exception {
     validator.checkVMSizeForRegion(TestHelper.buildValidDirectorUnitTestConfig(), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -387,7 +389,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkVMSizeForRegion(new SimpleConfiguration(map), accumulator, localizationContext,
         azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -400,7 +402,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "/publisher/cloudera/offer/cloudera-centos-os-preview/sku/7_2/version/latest");
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -413,7 +415,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "/publisher/cloudera/offer/cloudera-centos-os-preview/sku/7_2/version/1.0.0");
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -426,7 +428,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "/publisher/cloudera/offer/cloudera-centos-os-preview/sku/7_2/version/99.99.99");
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -443,7 +445,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -453,7 +455,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "/publisher/cloudera/offer/cloudera-centos-os/sku/7_2/version/0.0.0");
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -463,7 +465,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "fake-image");
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -478,7 +480,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -494,7 +496,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -502,6 +504,16 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
         "/publisher/fake-publisher/offer/fake-offer/sku/fake-sku/version/fake-version");
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
+    assertPluginConditions(1);
+  }
+
+  @Test
+  public void checkVmImageLooksLikeCustomImageButMissingOtherFieldsAccumulatesErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        "/subscriptions/fake-subscription/resourceGroups/fake-rg/providers/Microsoft.Compute/images/fake-custom-image");
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
     Assert.assertEquals(1, accumulator.getConditionsByKey().size());
@@ -520,9 +532,13 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     cfgMap.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
         customImageUri);
 
+    validator.checkVmImage(new SimpleConfiguration(cfgMap), accumulator,
+        localizationContext, azure);
+    assertPluginConditions(0);
+
     validator.checkUseCustomImage(new SimpleConfiguration(cfgMap), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
 
     CustomVmImageTestHelper.deleteCustomManagedVmImage(customImageUri);
   }
@@ -535,9 +551,13 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     cfgMap.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
         "/some/invalid/custom/image/id");
 
+    validator.checkVmImage(new SimpleConfiguration(cfgMap), accumulator,
+        localizationContext, azure);
+    assertPluginConditions(0);
+
     validator.checkUseCustomImage(new SimpleConfiguration(cfgMap), accumulator,
         localizationContext, azure);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -550,10 +570,13 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     cfgMap.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
         dummyCustomImageId);
 
+    validator.checkVmImage(new SimpleConfiguration(cfgMap), accumulator,
+        localizationContext, azure);
+    assertPluginConditions(0);
+
     validator.checkUseCustomImage(new SimpleConfiguration(cfgMap), accumulator,
         localizationContext, azure);
-
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -565,7 +588,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
 
     validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   // just in case it becomes a default at some point to use MSI
@@ -577,7 +600,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     map.remove(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey());
 
     validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -589,7 +612,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
 
     validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -600,7 +623,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     map.remove(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey());
 
     validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -612,7 +635,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
 
     validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -624,7 +647,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "fake-user-assigned-name");
 
     validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -636,7 +659,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
         "fake-user-assigned-name");
 
     validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
   }
 
   @Test
@@ -652,7 +675,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
         localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -665,7 +688,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
         localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -680,7 +703,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
         localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -696,7 +719,7 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
         localizationContext);
-    Assert.assertEquals(0, accumulator.getConditionsByKey().size());
+    assertPluginConditions(0);
   }
 
   @Test
@@ -713,6 +736,40 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
         localizationContext);
-    Assert.assertEquals(1, accumulator.getConditionsByKey().size());
+    assertPluginConditions(1);
+  }
+
+  @Test
+  public void checkUserAssignedMsiValidAndImplicitMsiValidExpectNoErrors() throws Exception {
+    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
+
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    // uaMSI
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
+        TestHelper.TEST_RESOURCE_GROUP);
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
+        TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
+    // AAD Group Name
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap().getConfigKey(),
+        "Yes");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME.unwrap().getConfigKey(),
+        TestHelper.TEST_AAD_GROUP_NAME);
+
+    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
+    assertPluginConditions(0);
+
+    validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator, localizationContext);
+    assertPluginConditions(0);
+  }
+
+  private void assertPluginConditions(int expectedConditionCount) {
+    Map<String, Collection<PluginExceptionCondition>> conditions =
+        accumulator.getConditionsByKey();
+    int numberOfConditions = conditions.size();
+    String errorMessage = String.format("Expected %d plugin exception " +
+        "condition(s) but got %d. Plugin exception conditions: %s",
+        expectedConditionCount, numberOfConditions, conditions
+    );
+    Assert.assertEquals(errorMessage, expectedConditionCount, numberOfConditions);
   }
 }
