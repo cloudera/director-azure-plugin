@@ -43,9 +43,6 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineDataDisk;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineScaleSet;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineScaleSetVM;
-import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.ActiveDirectoryObject;
-import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.ServicePrincipal;
-import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.IPAllocationMethod;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.NetworkInterface;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.NetworkInterfaceBase;
@@ -68,17 +65,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 import org.junit.After;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
@@ -109,6 +103,9 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
 
   private static final DefaultLocalizationContext DEFAULT_LOCALIZATION_CONTEXT =
       new DefaultLocalizationContext(Locale.getDefault(), "");
+
+  @Rule
+  public final ExpectedException thrown = ExpectedException.none();
 
   @Rule
   public TestRule watcher = new TestWatcher() {
@@ -275,17 +272,19 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
   }
 
   @Test
-  public void fullCycleVMWithVmImageOneLineExpectSuccess() throws Exception {
+  public void fullCycleVMWithVmImageOneLineAndVMSizeLowerCaseExpectSuccess() throws Exception {
     fullCycleHelper(AzureCreator.newBuilder()
         .setImage("/publisher/cloudera/offer/cloudera-centos-os/sku/7_2/version/latest")
+        .setVmSize(TestHelper.TEST_VM_SIZE.toLowerCase())
         .build());
 
   }
 
   @Test
-  public void fullCycleVMWithPreviewVmImageOneLineExpectSuccess() throws Exception {
+  public void fullCycleVMWithPreviewVmImageOneLineAndVMSizeUpperCaseExpectSuccess() throws Exception {
     fullCycleHelper(AzureCreator.newBuilder()
         .setImage("/publisher/cloudera/offer/cloudera-centos-os-preview/sku/7_2/version/latest")
+        .setVmSize(TestHelper.TEST_VM_SIZE.toUpperCase())
         .build());
   }
 
@@ -364,18 +363,20 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
   }
 
   @Test
-  public void fullCycleVmssWithVMImageOneLineExpectSuccess() throws Exception {
+  public void fullCycleVmssWithVMImageOneLineAndVMSizeLowerCaseExpectSuccess() throws Exception {
     fullCycleHelper(AzureCreator.newBuilder()
         .setUseVmss(true)
         .setImage("/publisher/cloudera/offer/cloudera-centos-os/sku/7_2/version/latest")
+        .setVmSize(TestHelper.TEST_VM_SIZE.toLowerCase())
         .build());
   }
 
   @Test
-  public void fullCycleVmssWithPreviewVMImageOneLineExpectSuccess() throws Exception {
+  public void fullCycleVmssWithPreviewVMImageOneLineAndVMSizeUpperCaseExpectSuccess() throws Exception {
     fullCycleHelper(AzureCreator.newBuilder()
         .setUseVmss(true)
         .setImage("/publisher/cloudera/offer/cloudera-centos-os-preview/sku/7_2/version/latest")
+        .setVmSize(TestHelper.TEST_VM_SIZE.toUpperCase())
         .build());
   }
 
@@ -625,7 +626,13 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
     // User Assigned MSI checks
     if (azureCreator.withUserAssignedMsi()) {
       VirtualMachineScaleSet vmss = azure.virtualMachineScaleSets()
-          .getByResourceGroup(azureCreator.getComputeResourceGroup(), azureCreator.getGroupId());
+          .getByResourceGroup(
+              azureCreator.getComputeResourceGroup(),
+              VirtualMachineScaleSetAllocator.getVirtualMachineScaleSetName(
+                  azureCreator.getInstanceNamePrefix(),
+                  azureCreator.getGroupId()
+              )
+          );
       assertTrue(vmss.isManagedServiceIdentityEnabled());
       assertTrue(vmss.managedServiceIdentityType().equals(ResourceIdentityType.USER_ASSIGNED));
       assertTrue(!vmss.userAssignedManagedServiceIdentityIds().isEmpty());
@@ -821,7 +828,7 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
   }
 
   @Test
-  public void vmGetInstanceStateWithInvalidCredentialsReturnsMapOfUnknowns() throws Exception {
+  public void vmGetInstanceStateWithInvalidCredentialsThrowsUPE() throws Exception {
     LOG.info("vmGetInstanceStateWithInvalidCredentialsReturnsMapOfUnknowns");
 
     Collection<String> instanceIds = new ArrayList<>();
@@ -850,11 +857,8 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
         TestHelper.buildValidDirectorLiveTestConfig(), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
 
-    Map<String, InstanceState> vms = provider.getInstanceState(template, instanceIds);
-    assertEquals(instanceIds.size(), vms.size());
-    for (Map.Entry<String, InstanceState> entry : vms.entrySet()) {
-      assertEquals(InstanceStatus.UNKNOWN, entry.getValue().getInstanceStatus());
-    }
+    thrown.expect(UnrecoverableProviderException.class);
+    provider.getInstanceState(template, instanceIds);
   }
 
   @Test
@@ -1376,7 +1380,7 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
     LOG.info("0. set up");
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
-        TestHelper.TEST_RHEL_IMAGE_NAME);
+        TestHelper.TEST_RHEL_IMAGE_URN);
 
     CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
         new SimpleConfiguration(map), Locale.getDefault());
@@ -1411,7 +1415,7 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
     LOG.info("0. set up");
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
-        TestHelper.TEST_RHEL_IMAGE_NAME);
+        TestHelper.TEST_RHEL_IMAGE_URN);
     map.put(GROUP_ID.unwrap().getConfigKey(), RandomStringUtils.randomAlphabetic(8).toLowerCase());
     map.put(AUTOMATIC.unwrap().getConfigKey(), String.valueOf(true));
 
@@ -1524,228 +1528,5 @@ public class AzureComputeProviderLiveTest extends AzureComputeProviderLiveTestBa
     // 7. delete custom image
     LOG.info("7. delete custom image");
     CustomVmImageTestHelper.deleteCustomManagedVmImage(imageUri);
-  }
-
-  @Test
-  public void createVmWithImplicitMsiAndAddToExistingAadGroup()
-      throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-    LOG.info("createVmWithImplicitMsiAndAddToExistingAadGroup");
-    msiTestHelper(false, true, true, false);
-  }
-
-  @Test
-  public void createVmWithImplicitMsiAndNotAddToExistingAadGroup()
-      throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-    LOG.info("createVmWithImplicitMsiAndNotAddToExistingAadGroup");
-    msiTestHelper(false, true, false, false);
-  }
-
-  @Test
-  public void createVmWithUserAssignedMsiAndSystemAssignedMsi()
-      throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-    LOG.info("fullCycleWithUserAssignedMsiAndSystemAssignedMsi");
-    msiTestHelper(false, true, true, true);
-  }
-
-  @Test
-  public void createVmWithoutImplicitMsi()
-      throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-    LOG.info("createVmWithoutImplicitMsi");
-    msiTestHelper(false, false, false, false);
-  }
-
-  @Test
-  public void createVmssWithoutImplicitMsi()
-      throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-    LOG.info("createVmssWithoutImplicitMsi");
-    msiTestHelper(true, false, false, false);
-  }
-
-  /**
-   * Helper function to run implicit MSI tests
-   *
-   * @param withImplicitMsi true for creating VM with implicit MSI
-   * @param assignGroup true for adding implicit MSI to existing AAD group
-   * @param withUserAssignedMsi true for creating VM with user assigned MSI
-   * @throws Exception
-   */
-  private void msiTestHelper(
-      boolean isScaleSet, boolean withImplicitMsi, boolean assignGroup, boolean withUserAssignedMsi)
-      throws Exception {
-    // 0. set up
-    LOG.info("0. set up");
-    CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID,
-        TestHelper.buildValidDirectorLiveTestConfig(), Locale.getDefault());
-    AzureComputeProvider provider = (AzureComputeProvider) cloudProvider.createResourceProvider(
-        AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig());
-
-    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap()
-        .getConfigKey(), withImplicitMsi ? "Yes" : "No");
-
-    if (assignGroup) {
-      map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME
-              .unwrap().getConfigKey(),
-          TestHelper.TEST_AAD_GROUP_NAME);
-    }
-
-    if (withUserAssignedMsi) {
-      map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
-          TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
-      map.put(
-          AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
-          TestHelper.TEST_RESOURCE_GROUP);
-    }
-
-    if (isScaleSet) {
-      map.put(GROUP_ID.unwrap().getConfigKey(), RandomStringUtils.randomAlphabetic(8).toLowerCase());
-      map.put(AUTOMATIC.unwrap().getConfigKey(), String.valueOf(true));
-    }
-
-    AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
-        new SimpleConfiguration(map), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
-
-    // the instanceId to use for this test
-    String instanceId = UUID.randomUUID().toString();
-    Collection<String> instanceIds = new ArrayList<>();
-    instanceIds.add(instanceId);
-
-    // 1. allocate the VMs, allow success even if none come up
-    LOG.info("1. allocate");
-    List<String> instances = provider
-        .allocate(template, instanceIds, 1)
-        .stream()
-        .map(AzureComputeInstance::getId)
-        .collect(Collectors.toList());
-
-    // 2. verify instances can be found
-    LOG.info("2. find");
-    ArrayList<AzureComputeInstance<? extends AzureInstance>> foundInstances =
-        (ArrayList<AzureComputeInstance<? extends AzureInstance>>) provider.find(template, instances);
-    assertEquals(foundInstances.size(), 1);
-
-    // 3. verify uaMSI and saMSI
-    LOG.info("3. MSI");
-    GraphRbacManager graphRbacManager = TestHelper.getAzureCredentials().getGraphRbacManager();
-    String saMsiObjectId = null;
-
-    if (withUserAssignedMsi) {
-      // uaMSI checks
-      if (!isScaleSet) {
-        for (AzureComputeInstance instance : foundInstances) {
-          VirtualMachine vm = (VirtualMachine) instance.unwrap();
-
-          // the saMSI object should be null
-          saMsiObjectId = vm.systemAssignedManagedServiceIdentityPrincipalId();
-          assertThat(saMsiObjectId).isNull();
-          assertTrue(vm.isManagedServiceIdentityEnabled());
-          assertTrue(
-              vm.managedServiceIdentityType().equals(ResourceIdentityType.USER_ASSIGNED));
-          assertTrue(!vm.userAssignedManagedServiceIdentityIds().isEmpty());
-
-          boolean containsMsi = false;
-          for (String i : vm.userAssignedManagedServiceIdentityIds()) {
-            if (i.contains(TestHelper.TEST_USER_ASSIGNED_MSI_NAME)) {
-              containsMsi = true;
-            }
-          }
-          assertTrue(containsMsi);
-        }
-      } else {
-        VirtualMachineScaleSet vmss = azure.virtualMachineScaleSets()
-            .getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, template.getGroupId());
-        saMsiObjectId = vmss.systemAssignedManagedServiceIdentityPrincipalId();
-        assertThat(saMsiObjectId).isNull();
-        assertThat(vmss.isManagedServiceIdentityEnabled());
-        assertThat(vmss.managedServiceIdentityType()).isEqualTo(ResourceIdentityType.USER_ASSIGNED);
-        assertThat(vmss.userAssignedManagedServiceIdentityIds().isEmpty()).isFalse();
-        assertThat(vmss.userAssignedManagedServiceIdentityIds().stream()
-            .anyMatch(si -> si.contains(TestHelper.TEST_USER_ASSIGNED_MSI_NAME))).isTrue();
-      }
-    }
-
-    // verify saMSI is created and present in group
-    if (withImplicitMsi) {
-      if (!isScaleSet) {
-        VirtualMachine vm = (VirtualMachine) foundInstances.get(0).unwrap();
-        saMsiObjectId = vm.systemAssignedManagedServiceIdentityPrincipalId();
-      } else {
-        VirtualMachineScaleSet vmss = azure.virtualMachineScaleSets()
-            .getByResourceGroup(TestHelper.TEST_RESOURCE_GROUP, template.getGroupId());
-        saMsiObjectId = vmss.systemAssignedManagedServiceIdentityPrincipalId();
-      }
-
-      // FIXME getById() throws an exception if service principal does not exist.
-      // This is is an Azure Java SDK issue: https://github.com/Azure/azure-sdk-for-java/issues/1845
-      ServicePrincipal msiObject;
-      try {
-        msiObject = graphRbacManager.servicePrincipals().getById(saMsiObjectId);
-      } catch (IllegalArgumentException e) {
-        msiObject = null;
-      }
-
-      if (withUserAssignedMsi) {
-        Assert.assertNull(saMsiObjectId);
-        Assert.assertNull(msiObject);
-      } else {
-        Assert.assertNotNull(msiObject); // failing on VMSS here
-
-        Set<ActiveDirectoryObject> members =
-            graphRbacManager.groups().getByName(TestHelper.TEST_AAD_GROUP_NAME).listMembers();
-        boolean found = false;
-        for (ActiveDirectoryObject object : members) {
-          if (object.id().equals(saMsiObjectId)) {
-            LOG.info("Found implicit MSI: name {}, id {}.", object.name(), object.id());
-            found = true;
-            break;
-          }
-        }
-        if (assignGroup) {
-          assertTrue(found);
-        }
-      }
-    }
-
-    // 4. delete vm
-    LOG.info("4. delete VM");
-    if (isScaleSet) {
-      provider.delete(template, Collections.emptyList());
-    } else {
-      provider.delete(template, instanceIds);
-    }
-
-    // 5. confirm vm deletion
-    LOG.info("5. confirm vm deletion");
-    assertEquals(0, provider.find(template, instances).size());
-
-    // wait a little for AAD to update
-    Thread.sleep(10000);
-
-    // 6. verify implicit MSI is removed (from AAD and from group)
-    if (assignGroup) {
-      LOG.info("6. verify implicit MSI deletion");
-      Set<ActiveDirectoryObject> members =
-          graphRbacManager.groups().getByName(TestHelper.TEST_AAD_GROUP_NAME).listMembers();
-      boolean found = false;
-      for (ActiveDirectoryObject object : members) {
-        if (object.id().equals(saMsiObjectId)) {
-          found = true;
-          break;
-        }
-      }
-      Assert.assertFalse(found);
-    }
-    // FIXME getById() throws an exception if service principal does not exist.
-    // This is is an Azure Java SDK issue: https://github.com/Azure/azure-sdk-for-java/issues/1845
-    try {
-      graphRbacManager.servicePrincipals().getById(saMsiObjectId);
-    } catch (IllegalArgumentException e) {
-      LOG.error("Expected exception: {}", e.getMessage());
-    }
   }
 }

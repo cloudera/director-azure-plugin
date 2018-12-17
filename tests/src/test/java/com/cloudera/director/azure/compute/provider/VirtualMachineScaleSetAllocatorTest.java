@@ -18,6 +18,7 @@
 package com.cloudera.director.azure.compute.provider;
 
 import static com.cloudera.director.azure.compute.instance.VirtualMachineScaleSetVM.create;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -25,12 +26,13 @@ import static org.mockito.Mockito.when;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.compute.provider.VirtualMachineScaleSetAllocator.VirtualMachineStateComparator;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.PowerState;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineScaleSetVM;
 import com.google.common.collect.ImmutableMap;
-import com.microsoft.azure.management.compute.PowerState;
-import com.microsoft.azure.management.compute.VirtualMachineScaleSetVM;
 
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.UUID;
 import java.util.function.Predicate;
 
 import org.apache.commons.lang3.tuple.Pair;
@@ -96,6 +98,25 @@ public class VirtualMachineScaleSetAllocatorTest {
         .stream()
         .forEach(ps -> assertThat(VirtualMachineStateComparator.POWER_STATES.get(ps)).isNotNull());
   }
+
+  @Test
+  public void testVirtualMachineScaleSetComputerNamePrefix() {
+    String groupId = UUID.randomUUID().toString();
+    String groupPart = AzureVirtualMachineMetadata.getFirstGroupOfUuid(groupId);
+
+    // > 6 chars prefix
+    assertThat(VirtualMachineScaleSetAllocator.getComputerNamePrefix("director", groupId))
+        .isEqualTo("direct-" + groupPart);
+
+    // == 6 chars prefix
+    assertThat(VirtualMachineScaleSetAllocator.getComputerNamePrefix("direct", groupId))
+        .isEqualTo("direct-" + groupPart);
+
+    // < 6 chars prefix
+    assertThat(VirtualMachineScaleSetAllocator.getComputerNamePrefix("dir", groupId))
+        .isEqualTo("dir-" + groupPart);
+  }
+
 
   private enum Equality implements Predicate<Integer> {
     LT(i -> i < 0),

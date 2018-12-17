@@ -497,4 +497,9 @@ public class AzurePluginConfigHelper {
     return azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_PROVIDER)
         .getInt(Configurations.AZURE_SDK_CONFIG_MAX_IDLE_CONN);
   }
+
+  public static synchronized String getHostKeyFingerprintCommand() {
+    return azurePluginConfig.getConfig(Configurations.AZURE_CONFIG_PROVIDER)
+        .getString(Configurations.AZURE_HOST_KEY_FINGERPRINT_COMMAND);
+  }
 }

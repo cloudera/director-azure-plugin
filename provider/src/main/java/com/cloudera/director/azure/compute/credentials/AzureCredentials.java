@@ -26,7 +26,6 @@ import com.google.common.base.Strings;
 import com.microsoft.azure.AzureEnvironment;
 import com.microsoft.azure.credentials.ApplicationTokenCredentials;
 import com.microsoft.azure.management.Azure;
-import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 import com.microsoft.azure.management.msi.implementation.MSIManager;
 
 import java.util.concurrent.TimeUnit;
@@ -141,19 +140,13 @@ public class AzureCredentials {
 
   /**
    * Validates the credentials by making an Azure backend call that forces the Azure object to
-   * authenticate itself immediately.
+   * authenticate itself immediately. No exceptions are caught.
    *
-   * @throws RuntimeException if there are any problems authenticating
+   * @throws Exception if there are any problems authenticating
    */
-  public void validate() throws RuntimeException {
+  public void validate() throws Exception {
     LOG.info("Validating credentials by authenticating with Azure.");
-
-    try {
-      Azure.authenticate(credentials).withDefaultSubscription();
-    } catch (Exception e) {
-      LOG.error("Failed to authenticate with Azure: " + e.getMessage());
-      throw new RuntimeException(e);
-    }
+    Azure.authenticate(credentials).withDefaultSubscription();
   }
 
   /**
@@ -169,19 +162,5 @@ public class AzureCredentials {
    */
   public MSIManager getMsiManager() {
     return MSIManager.authenticate(credentials, subId);
-  }
-
-  /**
-   * Returns an Azure Graph RBAC manager object for AAD management.
-   *
-   * @return an Azure Graph RBAC manager object for AAD management
-   */
-  public GraphRbacManager getGraphRbacManager() {
-    LOG.debug("Getting Azure Graph RBAC manager object (with deferred authentication).");
-    return GraphRbacManager
-        .configure()
-        .withConnectionTimeout(AzurePluginConfigHelper.getAzureSdkConnectionTimeout(),
-            TimeUnit.SECONDS)
-        .authenticate(credentials);
   }
 }

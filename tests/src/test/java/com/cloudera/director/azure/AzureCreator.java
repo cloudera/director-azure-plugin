@@ -16,7 +16,7 @@
 package com.cloudera.director.azure;
 
 import static com.cloudera.director.azure.Configurations.AZURE_DEFAULT_USER_AGENT_GUID;
-import static com.cloudera.director.azure.TestHelper.TEST_CENTOS_IMAGE_NAME;
+import static com.cloudera.director.azure.TestHelper.TEST_CENTOS_IMAGE_URN;
 import static com.cloudera.director.azure.TestHelper.TEST_DATA_DISK_SIZE;
 import static com.cloudera.director.azure.TestHelper.TEST_EMPTY_CONFIG;
 import static com.cloudera.director.azure.TestHelper.TEST_NETWORK_SECURITY_GROUP;
@@ -47,8 +47,8 @@ import org.assertj.core.util.Strings;
  * Helper class for managing the various Live Test scenarios.
  */
 public class AzureCreator {
-  private static final String YES = "Yes";
-  private static final String NO = "No";
+  private static final String YES = "yes";
+  private static final String NO = "no";
 
   public static class Builder {
     private int numberOfVMs = 1;
@@ -62,7 +62,7 @@ public class AzureCreator {
         System.getProperty(AzureCredentialsConfiguration.CLIENT_SECRET.unwrap().getConfigKey());
     private String userAgent = AZURE_DEFAULT_USER_AGENT_GUID;
     private String instanceNamePrefix = "director";
-    private String image = TEST_CENTOS_IMAGE_NAME;
+    private String image = TEST_CENTOS_IMAGE_URN;
     private String vmSize = TEST_VM_SIZE;
     private boolean useVmss = false;
     private String sshUsername = "cloudera";
@@ -85,8 +85,6 @@ public class AzureCreator {
     private String customImagePlan = TEST_EMPTY_CONFIG;
     private String userAssignedMsiName = TEST_EMPTY_CONFIG;
     private String userAssignedMsiResourceGroup = TEST_EMPTY_CONFIG;
-    private String useImplicitMsi = TEST_EMPTY_CONFIG;
-    private String implicitMsiAadGroupName = TEST_EMPTY_CONFIG;
     private String withStaticPrivateIpAddress = YES;
     private String withAcceleratedNetworking = NO;
     private String customDataEncoded = TEST_EMPTY_CONFIG;
@@ -262,16 +260,6 @@ public class AzureCreator {
       return this;
     }
 
-    public Builder setUseImplicitMsi(String useImplicitMsi) {
-      this.useImplicitMsi = useImplicitMsi;
-      return this;
-    }
-
-    public Builder setImplicitMsiAadGroupName(String implicitMsiAadGroupName) {
-      this.implicitMsiAadGroupName = implicitMsiAadGroupName;
-      return this;
-    }
-
     public Builder setCustomDataUnecoded(String customDataUnencoded) {
       this.customDataUnencoded = customDataUnencoded;
       return this;
@@ -342,8 +330,6 @@ public class AzureCreator {
   private String customImagePlan;
   private String userAssignedMsiResourceGroup;
   private String userAssignedMsiName;
-  private String useImplicitMsi;
-  private String implicitMsiAadGroupName;
   private String customDataUnencoded;
   private String customDataEncoded;
   private String withStaticPrivateIpAddress;
@@ -383,8 +369,6 @@ public class AzureCreator {
     this.customImagePlan = builder.customImagePlan;
     this.userAssignedMsiResourceGroup = builder.userAssignedMsiResourceGroup;
     this.userAssignedMsiName = builder.userAssignedMsiName;
-    this.useImplicitMsi = builder.useImplicitMsi;
-    this.implicitMsiAadGroupName = builder.implicitMsiAadGroupName;
     this.customDataUnencoded = builder.customDataUnencoded;
     this.customDataEncoded = builder.customDataEncoded;
     this.withStaticPrivateIpAddress = builder.withStaticPrivateIpAddress;
@@ -511,10 +495,6 @@ public class AzureCreator {
         userAssignedMsiResourceGroup);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
         userAssignedMsiName);
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap().getConfigKey(),
-        useImplicitMsi);
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME.unwrap().getConfigKey(),
-        implicitMsiAadGroupName);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED.unwrap().getConfigKey(),
         customDataUnencoded);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_ENCODED.unwrap().getConfigKey(),

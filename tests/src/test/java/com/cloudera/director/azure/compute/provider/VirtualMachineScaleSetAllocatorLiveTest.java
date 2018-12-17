@@ -17,15 +17,16 @@
 
 package com.cloudera.director.azure.compute.provider;
 
+import static com.cloudera.director.azure.AzureExceptions.AZURE_ERROR_CODE;
 import static com.cloudera.director.azure.TestHelper.TEST_RESOURCE_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VMSIZE;
 import static com.cloudera.director.azure.compute.provider.AzureComputeProviderConfigurationProperty.REGION;
-import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getFirstGroupOfUuid;
 import static com.cloudera.director.spi.v2.model.util.SimpleResourceTemplate.SimpleResourceTemplateConfigurationPropertyToken.GROUP_ID;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -44,7 +45,6 @@ import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.compute.instance.AzureInstance;
 import com.cloudera.director.azure.compute.instance.VirtualMachineScaleSetVM;
-import com.cloudera.director.azure.shaded.com.microsoft.azure.CloudException;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.PagedList;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.DataDisk;
@@ -52,7 +52,6 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineScaleSetVMs;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineScaleSets;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineSizeTypes;
-import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.cloudera.director.azure.shaded.com.typesafe.config.Config;
 import com.cloudera.director.azure.shaded.rx.Observable;
@@ -60,10 +59,15 @@ import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
 import com.cloudera.director.spi.v2.model.InstanceState;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.Resource;
+import com.cloudera.director.spi.v2.model.exception.AbstractPluginException;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionCondition;
 import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
+import com.cloudera.director.spi.v2.model.util.AbstractResource;
 import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 import com.cloudera.director.spi.v2.provider.CloudProvider;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
 
 import java.lang.reflect.Field;
 import java.util.Collection;
@@ -71,6 +75,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.SortedSet;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
@@ -105,7 +110,7 @@ public class VirtualMachineScaleSetAllocatorLiveTest extends AzureComputeProvide
 
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(PUBLIC_IP.unwrap().getConfigKey(), "No");
-    map.put(GROUP_ID.unwrap().getConfigKey(), getFirstGroupOfUuid(UUID.randomUUID().toString()));
+    map.put(GROUP_ID.unwrap().getConfigKey(), UUID.randomUUID().toString());
     SimpleConfiguration config = new SimpleConfiguration(map);
 
     CloudProvider cloudProvider = LAUNCHER.createCloudProvider(AzureCloudProvider.ID, config, Locale.getDefault());
@@ -121,7 +126,7 @@ public class VirtualMachineScaleSetAllocatorLiveTest extends AzureComputeProvide
     doReturn(allocator)
         .when(provider)
         .createInstanceAllocator(
-            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
+            anyBoolean(), any(Azure.class), any(MSIManager.class), any(BiFunction.class));
 
     template = new AzureComputeInstanceTemplate("test-template", config, Collections.emptyMap(), context);
   }
@@ -165,7 +170,7 @@ public class VirtualMachineScaleSetAllocatorLiveTest extends AzureComputeProvide
     provider
         .allocate(template, instanceIds, instanceIds.size())
         .stream()
-        .map(instance -> instance.getId())
+        .map(AbstractResource::getId)
         .forEach(instanceId -> assertThat(instances.keySet().contains(instanceId)).isTrue());
 
     Map<String, InstanceState> states = provider.getInstanceState(template, instances.keySet());
@@ -173,7 +178,6 @@ public class VirtualMachineScaleSetAllocatorLiveTest extends AzureComputeProvide
 
     provider
         .find(template, instances.keySet())
-        .stream()
         .forEach(i -> assertThat(instances.get(i.getId()).name()).isEqualTo(i.unwrap().name()));
 
     assertThat(provider.find(template, Collections.emptyList()).size()).isEqualTo(instances.size());
@@ -208,10 +212,27 @@ public class VirtualMachineScaleSetAllocatorLiveTest extends AzureComputeProvide
   }
 
   @Test
+  public void testPartialDeletionInVirtualMachineScaleSetSucceed() throws InterruptedException {
+    Map<String, VirtualMachineScaleSetVM> instances = provider
+        .allocate(template, instanceIds, instanceIds.size())
+        .stream()
+        .collect(Collectors.<AzureComputeInstance<?>, String, VirtualMachineScaleSetVM>toMap(
+            Resource::getId, i -> (VirtualMachineScaleSetVM) i.unwrap()));
+    assertThat(instances.size()).isEqualTo(instanceIds.size());
+
+    List<String> instanceNames = Lists.newArrayList(instances.keySet());
+    provider.delete(template, instanceNames.stream().limit(2).collect(Collectors.toList()));
+
+    provider
+        .find(template, Collections.emptyList())
+        .forEach(i -> assertThat(i.unwrap().name()).isEqualTo(instanceNames.get(instanceNames.size() - 1)));
+  }
+
+  @Test
   public void testInvalidCreateParameter() throws InterruptedException {
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(PUBLIC_IP.unwrap().getConfigKey(), "No");
-    map.put(GROUP_ID.unwrap().getConfigKey(), getFirstGroupOfUuid(UUID.randomUUID().toString()));
+    map.put(GROUP_ID.unwrap().getConfigKey(), UUID.randomUUID().toString());
     map.put(DATA_DISK_SIZE.unwrap().getConfigKey(), "4096");
     SimpleConfiguration config = new SimpleConfiguration(map);
 
@@ -221,8 +242,7 @@ public class VirtualMachineScaleSetAllocatorLiveTest extends AzureComputeProvide
       provider.allocate(instanceTemplate, instanceIds, instanceIds.size());
       fail("Allocation expected to fail");
     } catch (UnrecoverableProviderException ex) {
-      assertThat(ex.getCause()).isNotNull();
-      assertThat(CloudException.class.isInstance(ex.getCause())).isTrue();
+      verifySingleErrorCode(ex, "InvalidParameter");
       assertThat(azure.virtualMachineScaleSets().getByResourceGroup(TEST_RESOURCE_GROUP, template.getGroupId()))
           .isNull();
     }
@@ -291,5 +311,14 @@ public class VirtualMachineScaleSetAllocatorLiveTest extends AzureComputeProvide
     Field field = AzurePluginConfigHelper.class.getDeclaredField("azurePluginConfig");
     field.setAccessible(true);
     field.set(null, config);
+  }
+
+  private void verifySingleErrorCode(AbstractPluginException ex, String expectedErrorCode) {
+    Map<String, SortedSet<PluginExceptionCondition>> conditionsByKey =
+        ex.getDetails().getConditionsByKey();
+    SortedSet<PluginExceptionCondition> conditions = conditionsByKey.get(null);
+    PluginExceptionCondition condition = Iterables.getOnlyElement(conditions);
+    Map<String, String> exceptionInfo = condition.getExceptionInfo();
+    assertEquals(exceptionInfo.get(AZURE_ERROR_CODE), expectedErrorCode);
   }
 }

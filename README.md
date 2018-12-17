@@ -89,7 +89,6 @@ To run all Live Tests, from Launchpad's base directory run:
 mvn -e \
 -pl plugins/azure/tests \
 -Dtest.azure.live \
--Dtest.azure.implicitMsiLive \
 -DsubscriptionId=${SUBSCRIPTION_ID} \
 -DtenantId=${TENANT_ID} \
 -DclientId=${CLIENT_ID} \
@@ -106,7 +105,6 @@ To run a specific test, from Launchpad's base directory run (note the change fro
 mvn -e \
 -pl plugins/azure/tests \
 -Dtest.azure.live \
--Dtest.azure.implicitMsiLive \
 -DsubscriptionId=${SUBSCRIPTION_ID} \
 -DtenantId=${TENANT_ID} \
 -DclientId=${CLIENT_ID} \

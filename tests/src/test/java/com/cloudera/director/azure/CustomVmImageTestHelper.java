@@ -98,7 +98,7 @@ public class CustomVmImageTestHelper {
     if (!withPlan) {
       // create managed custom VM image w/o purchase plan
       cfgMap.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
-          TestHelper.TEST_RHEL_IMAGE_NAME);
+          TestHelper.TEST_RHEL_IMAGE_URN);
     }
 
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,

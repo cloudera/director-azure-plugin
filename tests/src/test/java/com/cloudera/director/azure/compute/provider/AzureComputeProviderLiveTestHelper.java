@@ -54,7 +54,7 @@ class AzureComputeProviderLiveTestHelper {
     String prefix = map
         .get(InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX.unwrap().getConfigKey());
     boolean managed =
-        map.get(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey()).equals("Yes");
+        map.get(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey()).equalsIgnoreCase("yes");
     int numberOfDataDisks = Integer.parseInt(
         map.get(AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT.unwrap().getConfigKey()));
 
@@ -87,7 +87,7 @@ class AzureComputeProviderLiveTestHelper {
         templateLocalizationContext);
     boolean managed = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
-        templateLocalizationContext).equals("Yes");
+        templateLocalizationContext).equalsIgnoreCase("yes");
     int numberOfDataDisks = Integer.parseInt(template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT,
         templateLocalizationContext));

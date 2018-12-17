@@ -17,6 +17,9 @@
 
 package com.cloudera.director.azure.compute.provider;
 
+import static com.google.common.base.Throwables.getRootCause;
+
+import com.cloudera.director.azure.AzureExceptions;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
@@ -32,6 +35,7 @@ import com.cloudera.director.spi.v2.model.InstanceState;
 import com.cloudera.director.spi.v2.model.InstanceStatus;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.Resource;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionDetails;
 import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v2.model.util.SimpleInstanceState;
 import com.cloudera.director.spi.v2.provider.ResourceProviderMetadata;
@@ -39,11 +43,10 @@ import com.cloudera.director.spi.v2.provider.util.SimpleResourceProviderMetadata
 import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
-import com.google.common.collect.Maps;
+import com.microsoft.aad.adal4j.AuthenticationException;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.InstanceViewStatus;
 import com.microsoft.azure.management.compute.PowerState;
-import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 import com.microsoft.azure.management.msi.implementation.MSIManager;
 
 import java.io.InterruptedIOException;
@@ -262,8 +265,6 @@ public class AzureComputeProvider
   }
 
   /**
-   * NOT IMPLEMENTED - empty Map is returned
-   *
    * Returns a map from instance identifiers to a set of host key fingerprints for the specified
    * instances. The implementation can return an empty map to indicate that it cannot find the host
    * key fingerprints or that it does not support retrieving host key fingerprints. In that case
@@ -279,8 +280,10 @@ public class AzureComputeProvider
   @Override
   public Map<String, Set<String>> getHostKeyFingerprints(AzureComputeInstanceTemplate template,
       Collection<String> instanceIds) throws InterruptedException {
-    LOG.info("AzureComputeProvider.getHostKeyFingerprints() is NOT implemented.");
-    return Maps.newHashMap();
+    return withInstanceAllocator(
+        template.isAutomatic(),
+        allocator -> allocator.getHostKeyFingerprints(getLocalizationContext(), template, instanceIds),
+        InterruptedException.class);
   }
 
   /**
@@ -343,11 +346,22 @@ public class AzureComputeProvider
       throws X {
 
     try {
+      credentials.validate();
+    } catch (Exception e) {
+      // see if at it's root it's an AuthenticationException
+      Exception rootException = getRootCause(e) instanceof AuthenticationException ?
+          new Exception(getRootCause(e)) :
+          e;
+
+      LOG.error("Error validating credentials: " + rootException.getMessage());
+      throw AzureExceptions.propagateUnrecoverable("Error validating credentials.", rootException);
+    }
+
+    try {
       Azure azure = credentials.authenticate();
-      GraphRbacManager graphRbacManager = credentials.getGraphRbacManager();
       MSIManager msiManager = credentials.getMsiManager();
       InstanceAllocator instanceAllocator = createInstanceAllocator(
-          isAutoScaling, azure, graphRbacManager, msiManager, this::getConfigurationValue);
+          isAutoScaling, azure, msiManager, this::getConfigurationValue);
 
       return action.apply(instanceAllocator);
 
@@ -367,11 +381,26 @@ public class AzureComputeProvider
       }
 
       Throwables.throwIfInstanceOf(e, exClass);
-      Throwables.throwIfInstanceOf(e, UnrecoverableProviderException.class);
+      throwIfInstanceOfUnrecoverableProviderException(e);
       Throwables.throwIfInstanceOf(e, RuntimeException.class);
 
       LOG.error("Failed in provider", e);
       throw new UnrecoverableProviderException(e);
+    }
+  }
+
+  private static void throwIfInstanceOfUnrecoverableProviderException(Throwable e)
+      throws UnrecoverableProviderException {
+    if (e instanceof UnrecoverableProviderException) {
+      UnrecoverableProviderException upe = (UnrecoverableProviderException) e;
+      Throwable throwable = upe.getCause();
+      // add details to upe only when details are not added and the cause is Exception
+      if (upe.getDetails().equals(PluginExceptionDetails.DEFAULT_DETAILS) &&
+          throwable != null && throwable instanceof Exception) {
+        throw AzureExceptions.propagateUnrecoverable(upe.getMessage(), (Exception) throwable);
+      } else {
+        throw upe;
+      }
     }
   }
 
@@ -386,14 +415,13 @@ public class AzureComputeProvider
   InstanceAllocator createInstanceAllocator(
       boolean isAutoScaling,
       Azure azure,
-      GraphRbacManager graphRbacManager,
       MSIManager msiManager,
       BiFunction<AzureComputeProviderConfigurationProperty, LocalizationContext, String> configRetriever) {
 
     if (isAutoScaling) {
       return new VirtualMachineScaleSetAllocator(azure, msiManager, configRetriever);
     }
-    return new VirtualMachineAllocator(azure, graphRbacManager, msiManager, configRetriever);
+    return new VirtualMachineAllocator(azure, msiManager, configRetriever);
   }
 
   @FunctionalInterface

@@ -18,6 +18,7 @@ package com.cloudera.director.azure.compute.instance;
 
 import static com.cloudera.director.azure.Configurations.AZURE_CUSTOM_DATA_MAX_CHARACTERS;
 import static com.cloudera.director.spi.v2.model.util.Validations.addError;
+import static com.google.common.base.Throwables.getRootCause;
 
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
@@ -32,6 +33,7 @@ import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccu
 import com.cloudera.director.spi.v2.model.exception.ValidationException;
 import com.google.common.base.Strings;
 import com.google.common.io.BaseEncoding;
+import com.microsoft.aad.adal4j.AuthenticationException;
 import com.microsoft.azure.CloudException;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.AvailabilitySet;
@@ -39,8 +41,6 @@ import com.microsoft.azure.management.compute.AvailabilitySetSkuTypes;
 import com.microsoft.azure.management.compute.ImageReference;
 import com.microsoft.azure.management.compute.VirtualMachineCustomImage;
 import com.microsoft.azure.management.compute.VirtualMachineSize;
-import com.microsoft.azure.management.graphrbac.ActiveDirectoryGroup;
-import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 import com.microsoft.azure.management.msi.Identity;
 import com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.microsoft.azure.management.network.Network;
@@ -103,6 +103,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
   public void validate(String name, Configured directorConfig,
       PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
     final String genericErrorMsg = "Error occurred during validation: %s.";
+    final String credentialErrorMsg = "Error validating credentials: %s.";
 
     // Checks that don't reach out to the Azure backend.
     checkFQDNSuffix(directorConfig, accumulator, localizationContext);
@@ -110,6 +111,23 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
     checkStorage(directorConfig, accumulator, localizationContext);
     checkSshUsername(directorConfig, accumulator, localizationContext);
     checkCustomData(directorConfig, accumulator, localizationContext);
+
+    // Check the azure credentials first.
+    try {
+      credentials.validate();
+    } catch (Exception e) {
+      // see if at it's root it's an AuthenticationException
+      String exceptionMessage = getRootCause(e) instanceof AuthenticationException ?
+          getRootCause(e).getMessage() :
+          e.getMessage();
+
+      // use null key to indicate generic error
+      ConfigurationPropertyToken token = null;
+      addError(accumulator, token, localizationContext, null, credentialErrorMsg, exceptionMessage);
+
+      // short-circuit return if credentials fail validation
+      return;
+    }
 
     // Azure backend checks: These checks verifies the resources specified in instance template do
     // exist in Azure.
@@ -125,7 +143,6 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       checkVmImage(directorConfig, accumulator, localizationContext, azure);
       checkUseCustomImage(directorConfig, accumulator, localizationContext, azure);
       checkUserAssignedMsi(directorConfig, accumulator, localizationContext);
-      checkImplicitMsiGroupName(directorConfig, accumulator, localizationContext);
     } catch (Exception e) {
       LOG.debug(String.format(genericErrorMsg, e.getMessage()));
       // use null key to indicate generic error
@@ -736,7 +753,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         "and version: %s; is not a valid image.";
     final boolean useCustomImage = directorConfig.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
-        localizationContext).equals("Yes");
+        localizationContext).equalsIgnoreCase("yes");
 
     // skip VM image check if user is using custom image
     if (useCustomImage) {
@@ -857,10 +874,10 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         "as the environment.";
     final boolean useManagedDisk = directorConfig.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
-        localizationContext).equals("Yes");
+        localizationContext).equalsIgnoreCase("yes");
     final boolean useCustomImage = directorConfig.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
-        localizationContext).equals("Yes");
+        localizationContext).equalsIgnoreCase("yes");
     final String imageId = directorConfig.getConfigurationValue(
         ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,
         localizationContext);
@@ -973,53 +990,5 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
       addError(accumulator, AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME,
           localizationContext, null, uaMsiDoesNotExistMsg);
     }
-  }
-
-  /**
-   * Checks to see if the configured AAD group exists (in the same tenant as the service principal
-   * used by the plugin. Also checks to see if the service principal can read AAD for group and
-   * group member info.
-   *
-   * NOTE: This validator does not check for write privilege for adding member to AAD group.
-   *
-   * @param directorConfig Director config
-   * @param accumulator error accumulator
-   * @param localizationContext localization context to extract config
-   */
-  void checkImplicitMsiGroupName(Configured directorConfig,
-      PluginExceptionConditionAccumulator accumulator,
-      LocalizationContext localizationContext) {
-    final String aadGroupDoesNotExistMsg = "Failed to find AAD group '%s' in Tenant '%s'. Please " +
-        "confirm the service principal has read/write access to the AAD tenant, the name of the " +
-        "AAD group or create the group.";
-    final boolean useImplicitMsi = directorConfig.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI,
-        localizationContext).equals("Yes");
-
-    if (!useImplicitMsi) {
-      LOG.debug("Not using implicit MSI, skip AAD group name validation.");
-      return;
-    }
-
-    final String aadGroupName = directorConfig.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME,
-        localizationContext);
-
-    if (aadGroupName == null || aadGroupName.isEmpty()) {
-      LOG.debug("Skip implicit MSI AAD group name validation because it is not configured.");
-      return;
-    }
-
-    GraphRbacManager graphRbacManager = credentials.getGraphRbacManager();
-    ActiveDirectoryGroup aadGroup = graphRbacManager.groups().getByName(aadGroupName);
-    if (aadGroup == null) {
-      LOG.debug(String.format(aadGroupDoesNotExistMsg, aadGroupName, graphRbacManager.tenantId()));
-      addError(accumulator,
-          AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME,
-          localizationContext, null, aadGroupDoesNotExistMsg, aadGroupName,
-          graphRbacManager.tenantId());
-      return;
-    }
-    LOG.info("AAD group '{}' exists in Tenant {}.", aadGroupName, graphRbacManager.tenantId());
   }
 }

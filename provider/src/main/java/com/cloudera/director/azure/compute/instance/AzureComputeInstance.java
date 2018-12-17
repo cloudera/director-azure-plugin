@@ -21,12 +21,13 @@ import com.cloudera.director.spi.v2.model.DisplayProperty;
 import com.cloudera.director.spi.v2.model.DisplayPropertyToken;
 import com.cloudera.director.spi.v2.model.util.SimpleDisplayPropertyBuilder;
 import com.cloudera.director.spi.v2.util.DisplayPropertiesUtil;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.net.InetAddresses;
 import com.microsoft.azure.management.compute.ImageReference;
 import com.microsoft.azure.management.network.NetworkInterfaceBase;
 import com.microsoft.azure.management.network.implementation.PublicIPAddressInner;
 
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -246,7 +247,8 @@ public class AzureComputeInstance<T extends AzureInstance>
    * Nic's primary private IP is null or an empty string
    * @throws IllegalArgumentException if the private IP address is not null or empty string but is invalid
    */
-  private static InetAddress getPrivateIpAddress(AzureInstance instance) {
+  @VisibleForTesting
+  static InetAddress getPrivateIpAddress(AzureInstance instance) {
     if (instance == null) {
       return null;
     }
@@ -259,10 +261,6 @@ public class AzureComputeInstance<T extends AzureInstance>
       return null;
     }
 
-    try {
-      return InetAddress.getByName(pip);
-    } catch (UnknownHostException e) {
-      throw new IllegalArgumentException("Invalid private IP address", e);
-    }
+    return InetAddresses.forString(pip);
   }
 }

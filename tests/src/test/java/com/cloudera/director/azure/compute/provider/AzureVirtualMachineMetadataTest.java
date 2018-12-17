@@ -19,6 +19,7 @@ package com.cloudera.director.azure.compute.provider;
 
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getBase64EncodedCustomData;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getFirstGroupOfUuid;
+import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getVmId;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.google.common.io.BaseEncoding;
@@ -64,5 +65,27 @@ public class AzureVirtualMachineMetadataTest {
     assertThat(actual).isNull();
     actual = getBase64EncodedCustomData(StringUtils.EMPTY, StringUtils.EMPTY);
     assertThat(actual).isNull();
+  }
+
+  @Test
+  public void testGetInstanceId() {
+    assertThat(getVmId("prefix-testId", "prefix")).isEqualTo("testId");
+  }
+
+  @Test(expected = IllegalArgumentException.class)
+  public void testGetInstanceIdBadPrefix() {
+    getVmId("prefix-testId", "badPrefix-");
+  }
+
+  @Test
+  public void getHostKeysFromCommandOutput() {
+    String output = "[some-nonsense]\n" +
+        "MD5:aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99\n" +
+        "MD5:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa\n" +
+        "\n" +
+        "[some-more-nonsense]";
+    assertThat(AzureVirtualMachineMetadata.getHostKeysFromCommandOutput(output)).containsOnly(
+        "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99",
+        "bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99:aa");
   }
 }

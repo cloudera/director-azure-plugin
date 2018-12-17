@@ -33,18 +33,24 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
   IMAGE(new SimpleConfigurationPropertyBuilder()
       .configKey(ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE
           .unwrap().getConfigKey())
-      .name("Image Alias")
+      .name("Image URN")
       .addValidValues(
-          "cloudera-centos-67-latest",
-          "cloudera-centos-68-latest",
-          "cloudera-centos-72-latest",
-          "cloudera-centos-74-latest",
-          "redhat-rhel-67-latest",
-          "redhat-rhel-72-latest",
-          "redhat-rhel-74-latest")
-      .defaultDescription("The VM image to deploy. This can be either the image alias " +
-          "referencing an image in the configurable images file or an inline image description " +
-          "in the format: /publisher/&lt;publisher&gt;/offer/&lt;offer&gt;/sku/&lt;sku&gt;/version/&lt;version&gt;.")
+          "cloudera:cloudera-centos-os:6_7:latest",
+          "cloudera:cloudera-centos-os:6_8:latest",
+          "cloudera:cloudera-centos-os:7_2:latest",
+          "cloudera:cloudera-centos-os:7_4:latest",
+          "cloudera:cloudera-centos-os:7_5:latest",
+          "RedHat:RHEL:6.7:latest",
+          "RedHat:RHEL:7.2:latest",
+          "RedHat:RHEL:7.4:latest",
+          "RedHat:RHEL:7.5:latest")
+      .defaultDescription("The VM image to deploy. This can be one of the following:<br>" +
+          "a) (recommended) an Image URN in this format: &lt;publisher&gt;:&lt;offer&gt;:&lt;sku&gt;:&lt;version&gt; " +
+          "href='https://docs.microsoft.com/en-us/azure/virtual-machines/linux/cli-ps-findimage#terminology'>" +
+          "more information</a>;<br>" +
+          "b) an image alias referencing an image in the configurable images file;<br>" +
+          "c) (deprecated) an inline image description in the format: " +
+          "/publisher/&lt;publisher&gt;/offer/&lt;offer&gt;/sku/&lt;sku&gt;/version/&lt;version&gt;.")
       .defaultPlaceholder("Select VM image alias")
       .defaultErrorMessage("VM Image Alias is required.")
       .widget(ConfigurationProperty.Widget.OPENLIST)
@@ -285,28 +291,6 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
       .name("The User Assigned MSI Name")
       .defaultDescription("The User Assigned Managed Service Identity Name. If this and the User Assigned MSI " +
           "Resource Group field is left blank no MSI will be assigned to the VM.")
-      .widget(ConfigurationProperty.Widget.TEXT)
-      .required(false)
-      .hidden(true)
-      .build()),
-
-  USE_IMPLICIT_MSI(new SimpleConfigurationPropertyBuilder()
-      .configKey("useImplicitMsi")
-      .name("Use Implicit MSI")
-      .addValidValues(
-          "Yes",
-          "No")
-      .defaultValue("No")
-      .defaultDescription("Whether to use Implicit MSI on the VM.")
-      .widget(ConfigurationProperty.Widget.LIST)
-      .required(false)
-      .hidden(true)
-      .build()),
-
-  IMPLICIT_MSI_AAD_GROUP_NAME(new SimpleConfigurationPropertyBuilder()
-      .configKey("implicitMsiAadGroupName")
-      .name("Name of AAD group for implicit MSI to join.")
-      .defaultDescription("The name of the AAD group for implicit MSI to join.")
       .widget(ConfigurationProperty.Widget.TEXT)
       .required(false)
       .hidden(true)

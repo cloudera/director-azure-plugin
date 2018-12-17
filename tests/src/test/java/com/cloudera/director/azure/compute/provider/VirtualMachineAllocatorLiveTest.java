@@ -18,6 +18,7 @@
 
 package com.cloudera.director.azure.compute.provider;
 
+import static com.cloudera.director.azure.AzureExceptions.AZURE_ERROR_CODE;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getDnsName;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getFirstGroupOfUuid;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getVmName;
@@ -27,17 +28,16 @@ import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.spy;
 
 import com.cloudera.director.azure.AzureCloudProvider;
+import com.cloudera.director.azure.AzureExceptions;
 import com.cloudera.director.azure.CustomVmImageTestHelper;
 import com.cloudera.director.azure.TestHelper;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty;
-import com.cloudera.director.azure.compute.instance.AzureInstance;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.AvailabilitySet;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.Disk;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.DiskSkuTypes;
-import com.cloudera.director.azure.shaded.com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.Network;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.NetworkInterface;
@@ -48,6 +48,8 @@ import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.StorageAccountSkuType;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.storage.StorageAccount;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.AbstractPluginException;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionCondition;
 import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
@@ -60,11 +62,12 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.SortedSet;
 import java.util.UUID;
 import java.util.function.BiFunction;
 
+import com.google.common.collect.Iterables;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mockito;
@@ -103,12 +106,12 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
         config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
     VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
-        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+        azure, credentials.getMsiManager(), config::getConfigurationValue));
 
     doReturn(allocator)
         .when(provider)
         .createInstanceAllocator(
-            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
+            anyBoolean(), any(Azure.class), any(MSIManager.class), any(BiFunction.class));
 
     // the three VMs to use for this test
     Collection<String> instanceIds = new ArrayList<>();
@@ -202,11 +205,11 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
         config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
     VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
-        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+        azure, credentials.getMsiManager(), config::getConfigurationValue));
     doReturn(allocator)
         .when(provider)
         .createInstanceAllocator(
-            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
+            anyBoolean(), any(Azure.class), any(MSIManager.class), any(BiFunction.class));
 
     // the single VM to use for this test
     String instanceId = UUID.randomUUID().toString();
@@ -387,12 +390,12 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
         config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
     VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
-        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+        azure, credentials.getMsiManager(), config::getConfigurationValue));
 
     doReturn(allocator)
         .when(provider)
         .createInstanceAllocator(
-            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
+            anyBoolean(), any(Azure.class), any(MSIManager.class), any(BiFunction.class));
 
     // the three VMs to use for this test
     Collection<String> instanceIds = new ArrayList<>();
@@ -633,12 +636,12 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
         config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
     VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
-        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+        azure, credentials.getMsiManager(), config::getConfigurationValue));
 
     doReturn(allocator)
         .when(provider)
         .createInstanceAllocator(
-            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
+            anyBoolean(), any(Azure.class), any(MSIManager.class), any(BiFunction.class));
 
     // 1. allocate one instance
     LOG.info("1. allocate");
@@ -727,7 +730,7 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
 
       // don't create a public IP collision
       boolean createPublicIp = map.get(AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP
-          .unwrap().getConfigKey()).equals("Yes");
+          .unwrap().getConfigKey()).equalsIgnoreCase("yes");
       if (createPublicIp) {
         nicCreatable = nicCreatable.withNewPrimaryPublicIPAddress(allocator.buildPublicIpCreatable(
             azure, provider.getLocalizationContext(), template, secondPassId, getFirstGroupOfUuid(firstPassId)));
@@ -819,12 +822,12 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
         config, TAGS, DEFAULT_LOCALIZATION_CONTEXT);
     VirtualMachineAllocator allocator = spy(new VirtualMachineAllocator(
-        azure, credentials.getGraphRbacManager(), credentials.getMsiManager(), config::getConfigurationValue));
+        azure, credentials.getMsiManager(), config::getConfigurationValue));
 
     doReturn(allocator)
         .when(provider)
         .createInstanceAllocator(
-            anyBoolean(), any(Azure.class), any(GraphRbacManager.class), any(MSIManager.class), any(BiFunction.class));
+            anyBoolean(), any(Azure.class), any(MSIManager.class), any(BiFunction.class));
 
     // 1. allocate one instance
     LOG.info("1. allocate");
@@ -857,6 +860,9 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
       LOG.info("Fake delete.");
       provider.delete(template, instanceIds);
     } catch (UnrecoverableProviderException e) {
+      Assert.assertEquals("Failed to delete cluster resources due to an Azure provider error. " +
+          "These resources may still be running. Try deleting the cluster again, or contact support if this error persists.",
+          e.getMessage());
       deleteFailedOnPurpose = true;
       LOG.info("Failed delete correctly threw an UnrecoverableProviderException.");
     } catch (Exception e) {
@@ -986,10 +992,9 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
   }
 
   @Test
-  public void createVmWithImplicitMsiAndAddToInvalidAadGroupExpectNoResourcesLeaked()
+  public void createVmWithEULANotAcceptedImageExpectNoResourcesLeaked()
       throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-    LOG.info("createVmWithImplicitMsiAndAddToInvalidAadGroupExpectNoResourcesLeaked");
+    LOG.info("createVmWithEULANotAcceptedImageExpectNoResourcesLeaked");
 
     // 0. set up
     LOG.info("0. set up");
@@ -998,13 +1003,11 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
     AzureComputeProvider provider = (AzureComputeProvider) cloudProvider.createResourceProvider(
         AzureComputeProvider.METADATA.getId(), TestHelper.buildValidDirectorLiveTestConfig());
 
-    // enable implicit MSI config and set a random AAD name that shouldn't exist
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap()
-        .getConfigKey(), "Yes");
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME
-            .unwrap().getConfigKey(),
-        "test-" + UUID.randomUUID().toString());
+    // EULA for this image has not been accepted.
+    // This test will fail if it is accepted in the future.
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        "/publisher/cloudera/offer/cloudera-altus-centos-os-preview/sku/cmcdh_5-15/version/latest");
     AzureComputeInstanceTemplate template = new AzureComputeInstanceTemplate(TEMPLATE_NAME,
         new SimpleConfiguration(map), TAGS, DEFAULT_LOCALIZATION_CONTEXT);
 
@@ -1013,22 +1016,32 @@ public class VirtualMachineAllocatorLiveTest extends AzureComputeProviderLiveTes
     Collection<String> instanceIds = new ArrayList<>();
     instanceIds.add(instanceId);
 
-    // 1. allocate the VMs, allow success even if none come up
+    // 1. allocate the VM which will fail to come up
     LOG.info("1. allocate");
     try {
       provider.allocate(template, instanceIds, 1);
     } catch (UnrecoverableProviderException e) {
-      LOG.info("Caught expected UnrecoverableProviderException:", e);
+      LOG.info("Caught expected UnrecoverableProviderException: {}",
+          e.getDetails().getConditionsByKey().get(null));
+      verifySingleErrorCode(e, AzureExceptions.IMAGE_EULA_NOT_ACCEPTED);
     }
 
     // 2. verify that no instance is created
     LOG.info("2. find");
-    Collection<? extends AzureComputeInstance<? extends AzureInstance>> foundInstances =
-        provider.find(template, instanceIds);
+    Collection<? extends AzureComputeInstance<?>> foundInstances = provider.find(template, instanceIds);
     Assert.assertEquals(foundInstances.size(), 0);
 
     // 3. verify cleanup - no resources should be orphaned
     LOG.info("3. verify cleanup");
     Assert.assertTrue(AzureComputeProviderLiveTestHelper.resourcesDeleted(azure, provider, template, instanceIds));
+  }
+
+  private void verifySingleErrorCode(AbstractPluginException ex, String expectedErrorCode) {
+    Map<String, SortedSet<PluginExceptionCondition>> conditionsByKey =
+        ex.getDetails().getConditionsByKey();
+    SortedSet<PluginExceptionCondition> conditions = conditionsByKey.get(null);
+    PluginExceptionCondition condition = Iterables.getOnlyElement(conditions);
+    Map<String, String> exceptionInfo = condition.getExceptionInfo();
+    Assert.assertEquals(exceptionInfo.get(AZURE_ERROR_CODE), expectedErrorCode);
   }
 }

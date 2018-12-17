@@ -69,8 +69,7 @@ public class AzureCloudProvider extends AbstractCloudProvider {
   }
 
   /**
-   * Creates an AzureComputeProvider object. Also verifies the credentials provided in config unless
-   * the flag to validate credentials is false.
+   * Creates an AzureComputeProvider object without verifying the provided credentials.
    *
    * @param resourceProviderId the resource provider ID (should be the azure ID)
    * @param configuration resource provider configuration
@@ -83,13 +82,6 @@ public class AzureCloudProvider extends AbstractCloudProvider {
     // check that this is really the Azure provider ID
     if (!AzureComputeProvider.METADATA.getId().equals(resourceProviderId)) {
       throw new NoSuchElementException("Invalid provider id: " + resourceProviderId);
-    }
-
-    if (AzurePluginConfigHelper.validateCredentials()) {
-      // validate credentials by trying to authenticate with Azure
-      credentials.validate();
-    } else {
-      LOG.info("Skipping Azure credential validation with Azure backend.");
     }
 
     return new AzureComputeProvider(configuration, credentials, getLocalizationContext());

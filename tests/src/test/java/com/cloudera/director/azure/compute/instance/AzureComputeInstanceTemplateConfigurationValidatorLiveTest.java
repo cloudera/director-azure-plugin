@@ -16,14 +16,19 @@
 
 package com.cloudera.director.azure.compute.instance;
 
+import static com.cloudera.director.azure.TestHelper.TEST_CENTOS_IMAGE_NAME;
+import static com.cloudera.director.azure.TestHelper.TEST_CENTOS_IMAGE_URN;
+
 import com.cloudera.director.azure.AzureLauncher;
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.CustomVmImageTestHelper;
 import com.cloudera.director.azure.TestHelper;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
+import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachineSizeTypes;
 import com.cloudera.director.azure.shaded.com.typesafe.config.ConfigFactory;
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyValue;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.exception.PluginExceptionCondition;
 import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
@@ -33,6 +38,7 @@ import com.cloudera.director.spi.v2.provider.Launcher;
 
 import java.io.File;
 import java.util.Collection;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -313,14 +319,98 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
   }
 
   @Test
-  public void checkVmImageWithValidImageLatestVersionExpectNoErrors() throws Exception {
-    validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
+  public void checkAsAndMdWithNoAsAndMdWithVmSizeFromVirtualMachineSizeTypesClassCaseExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET.unwrap()
+        .getConfigKey(), "");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
+        "Yes");
+    map.put(VMSIZE, VirtualMachineSizeTypes.STANDARD_DS12_V2.toString()); // Standard_DS12_v2
+
+    validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
     assertPluginConditions(0);
   }
 
   @Test
-  public void checkVmImageWithValidUriLatestVersionExpectNoError() throws Exception {
+  public void checkAsAndMdWithNoAsAndMdWithVmSizeUpperCaseExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET.unwrap()
+        .getConfigKey(), "");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
+        "Yes");
+    map.put(VMSIZE, "STANDARD_DS12_V2");
+
+    validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
+        localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkAsAndMdWithNoAsAndMdWithVmSizeRandomCaseExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET.unwrap()
+        .getConfigKey(), "");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
+        "Yes");
+    map.put(VMSIZE, "StAnDaRd_Ds12_V2");
+
+    validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
+        localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkAsAndMdWithNoAsAndMdWithVmSizeLowerCaseExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.AVAILABILITY_SET.unwrap()
+        .getConfigKey(), "");
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS.unwrap().getConfigKey(),
+        "Yes");
+    map.put(VMSIZE, "standard_ds12_v2");
+
+    validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
+        localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkAllDefaultVmImagesExpectNoError() throws Exception {
+    List<ConfigurationPropertyValue> defaultImageUrns =
+        AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getValidValues(localizationContext);
+
+    for (ConfigurationPropertyValue urn : defaultImageUrns) {
+      Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+      map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+          urn.getLabel());
+
+      validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
+      assertPluginConditions(0);
+    }
+  }
+
+  @Test
+  public void checkVmImageWithValidUrnLatestVersionExpectNoError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        TEST_CENTOS_IMAGE_URN);
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVmImageWithValidUrnSpecificVersionExpcetNoError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        "cloudera:cloudera-centos-os:6_7:1.0.0");
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVmImageWithValidInlineLatestVersionExpectNoError() throws Exception {
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
         "/publisher/cloudera/offer/cloudera-centos-os/sku/7_2/version/latest");
@@ -330,10 +420,20 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
   }
 
   @Test
-  public void checkVmImageWithValidUriSpecificVersionExpectNoError() throws Exception {
+  public void checkVmImageWithValidInlineSpecificVersionExpectNoError() throws Exception {
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
         "/publisher/cloudera/offer/cloudera-centos-os/sku/6_7/version/1.0.0");
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVmImageWithValidImageLatestVersionExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        TEST_CENTOS_IMAGE_NAME);
 
     validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
     assertPluginConditions(0);
@@ -346,12 +446,32 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     Map<String, Object> imagesMap = AzurePluginConfigHelper
         .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE).root().unwrapped();
-    ((Map<String, Object>) imagesMap.get(TestHelper.TEST_CENTOS_IMAGE_NAME))
+    ((Map<String, Object>) imagesMap.get(TEST_CENTOS_IMAGE_NAME))
         .put("version", "2.0.7"); // 2.0.7 is the first version Cloudera published CentOS 7.4 with
     AzurePluginConfigHelper.setConfigurableImages(ConfigFactory.parseMap(imagesMap));
 
     validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
         localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVmImageWithUrnPreviewImageExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        "cloudera:cloudera-centos-os-preview:7_2:latest");
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVmImageWithInlinePreviewImageExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        "/publisher/cloudera/offer/cloudera-centos-os-preview/sku/7_2/version/latest");
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
     assertPluginConditions(0);
   }
 
@@ -373,23 +493,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
     validator.checkVmImage(new SimpleConfiguration(map), accumulator,
         localizationContext, azure);
     assertPluginConditions(0);
-  }
-
-  @Test
-  public void checkVMSizeWithValidTemplateExpectNoError() throws Exception {
-    validator.checkVMSizeForRegion(TestHelper.buildValidDirectorUnitTestConfig(), accumulator,
-        localizationContext, azure);
-    assertPluginConditions(0);
-  }
-
-  @Test
-  public void checkVMSizeWithInvalidTemplateExpectAccumulatesErrors() throws Exception {
-    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
-    map.put(VMSIZE, "invalid");
-
-    validator.checkVMSizeForRegion(new SimpleConfiguration(map), accumulator, localizationContext,
-        azure);
-    assertPluginConditions(1);
   }
 
   @Test
@@ -439,12 +542,15 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     Map<String, Object> imagesMap = AzurePluginConfigHelper
         .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE).root().unwrapped();
-    ((Map<String, Object>) imagesMap.get(TestHelper.TEST_CENTOS_IMAGE_NAME))
+    ((Map<String, Object>) imagesMap.get(TEST_CENTOS_IMAGE_NAME))
         .put("version", "0.0.0");
     AzurePluginConfigHelper.setConfigurableImages(ConfigFactory.parseMap(imagesMap));
 
-    validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
-        localizationContext, azure);
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        TEST_CENTOS_IMAGE_NAME);
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
     assertPluginConditions(1);
   }
 
@@ -475,11 +581,14 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     Map<String, Object> imagesMap = AzurePluginConfigHelper
         .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE).root().unwrapped();
-    ((Map<String, Object>) imagesMap.get(TestHelper.TEST_CENTOS_IMAGE_NAME)).clear();
+    ((Map<String, Object>) imagesMap.get(TEST_CENTOS_IMAGE_NAME)).clear();
     AzurePluginConfigHelper.setConfigurableImages(ConfigFactory.parseMap(imagesMap));
 
-    validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
-        localizationContext, azure);
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        TEST_CENTOS_IMAGE_NAME);
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
     assertPluginConditions(1);
   }
 
@@ -490,12 +599,15 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     Map<String, Object> imagesMap = AzurePluginConfigHelper
         .parseConfigFromClasspath(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE).root().unwrapped();
-    ((Map<String, Object>) imagesMap.get(TestHelper.TEST_CENTOS_IMAGE_NAME)).put("version",
+    ((Map<String, Object>) imagesMap.get(TEST_CENTOS_IMAGE_NAME)).put("version",
         "fake-version");
     AzurePluginConfigHelper.setConfigurableImages(ConfigFactory.parseMap(imagesMap));
 
-    validator.checkVmImage(TestHelper.buildValidDirectorLiveTestConfig(), accumulator,
-        localizationContext, azure);
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
+        TEST_CENTOS_IMAGE_NAME);
+
+    validator.checkVmImage(new SimpleConfiguration(map), accumulator, localizationContext, azure);
     assertPluginConditions(1);
   }
 
@@ -580,6 +692,63 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
   }
 
   @Test
+  public void checkVMSizeForRegionWithValidTemplateExpectNoError() throws Exception {
+    validator.checkVMSizeForRegion(TestHelper.buildValidDirectorUnitTestConfig(), accumulator,
+        localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVMSizeForRegionWithVmSizeFromVirtualMachineSizeTypesClassCaseExpectNoErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
+    map.put(VMSIZE, VirtualMachineSizeTypes.STANDARD_DS12_V2.toString()); // Standard_DS12_v2
+
+    validator.checkAvailabilitySetAndManagedDisks(new SimpleConfiguration(map), accumulator,
+        localizationContext, azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVMSizeForRegionWithUpperCaseVMSizeExpectNoError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
+    map.put(VMSIZE, "STANDARD_DS12_V2");
+
+    validator.checkVMSizeForRegion(new SimpleConfiguration(map), accumulator, localizationContext,
+        azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVMSizeForRegionWithRandomCaseVMSizeExpectNoError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
+    map.put(VMSIZE, "sTaNdArD_dS12_v2");
+
+    validator.checkVMSizeForRegion(new SimpleConfiguration(map), accumulator, localizationContext,
+        azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVMSizeForRegionWithLowerCaseVMSizeExpectNoError() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
+    map.put(VMSIZE, "standard_ds12_v2");
+
+    validator.checkVMSizeForRegion(new SimpleConfiguration(map), accumulator, localizationContext,
+        azure);
+    assertPluginConditions(0);
+  }
+
+  @Test
+  public void checkVMSizeForRegionWithInvalidTemplateExpectAccumulatesErrors() throws Exception {
+    Map<String, String> map = TestHelper.buildValidDirectorUnitTestMap();
+    map.put(VMSIZE, "invalid");
+
+    validator.checkVMSizeForRegion(new SimpleConfiguration(map), accumulator, localizationContext,
+        azure);
+    assertPluginConditions(1);
+  }
+
+  @Test
   public void checkUserAssignedMsiExpectNoErrors() throws Exception {
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
@@ -660,106 +829,6 @@ public class AzureComputeInstanceTemplateConfigurationValidatorLiveTest {
 
     validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
     assertPluginConditions(1);
-  }
-
-  @Test
-  public void checkImplicitMsiAadGroupExpectNoErrors() throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-
-    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap()
-        .getConfigKey(), "Yes");
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME
-            .unwrap().getConfigKey(),
-        TestHelper.TEST_AAD_GROUP_NAME);
-
-    validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
-        localizationContext);
-    assertPluginConditions(0);
-  }
-
-  @Test
-  public void checkImplicitMsiNoAadGroupExpectNoErrors() throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-
-    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap()
-        .getConfigKey(), "Yes");
-
-    validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
-        localizationContext);
-    assertPluginConditions(0);
-  }
-
-  @Test
-  public void checkImplicitMsiEmptyAadGroupExpectNoErrors() throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-
-    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap()
-        .getConfigKey(), "Yes");
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME
-            .unwrap().getConfigKey(), "");
-
-    validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
-        localizationContext);
-    assertPluginConditions(0);
-  }
-
-  @Test
-  public void skipCheckImplicitMsiAadGroupExpectNoErrors() throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-
-    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap()
-        .getConfigKey(), "No");
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME
-            .unwrap().getConfigKey(),
-        TestHelper.TEST_AAD_GROUP_NAME);
-
-    validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
-        localizationContext);
-    assertPluginConditions(0);
-  }
-
-  @Test
-  public void checkImplicitMsiAadGroupInvalidGroupExpectError() throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-
-    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap()
-        .getConfigKey(), "Yes");
-    // use a randomly generated group name that should not exist
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME
-            .unwrap().getConfigKey(),
-        UUID.randomUUID().toString());
-
-    validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator,
-        localizationContext);
-    assertPluginConditions(1);
-  }
-
-  @Test
-  public void checkUserAssignedMsiValidAndImplicitMsiValidExpectNoErrors() throws Exception {
-    Assume.assumeTrue(TestHelper.runImplicitMsiLiveTests());
-
-    Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
-    // uaMSI
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
-        TestHelper.TEST_RESOURCE_GROUP);
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
-        TestHelper.TEST_USER_ASSIGNED_MSI_NAME);
-    // AAD Group Name
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap().getConfigKey(),
-        "Yes");
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME.unwrap().getConfigKey(),
-        TestHelper.TEST_AAD_GROUP_NAME);
-
-    validator.checkUserAssignedMsi(new SimpleConfiguration(map), accumulator, localizationContext);
-    assertPluginConditions(0);
-
-    validator.checkImplicitMsiGroupName(new SimpleConfiguration(map), accumulator, localizationContext);
-    assertPluginConditions(0);
   }
 
   private void assertPluginConditions(int expectedConditionCount) {

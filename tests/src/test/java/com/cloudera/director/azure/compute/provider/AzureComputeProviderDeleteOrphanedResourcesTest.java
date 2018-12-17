@@ -126,7 +126,6 @@ public class AzureComputeProviderDeleteOrphanedResourcesTest {
 
     VirtualMachineAllocator allocator = new VirtualMachineAllocator(
         azure,
-        credentials.getGraphRbacManager(),
         credentials.getMsiManager(),
         (property, context) -> "");
 

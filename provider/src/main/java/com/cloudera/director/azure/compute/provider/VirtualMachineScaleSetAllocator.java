@@ -23,6 +23,8 @@ import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceT
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_SIZE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.IMAGE;
+import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP;
+import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.NETWORK_SECURITY_GROUP_RESOURCE_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.STORAGE_TYPE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME;
@@ -30,18 +32,23 @@ import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceT
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK;
+import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VIRTUAL_NETWORK_RESOURCE_GROUP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VMSIZE;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.WITH_ACCELERATED_NETWORKING;
 import static com.cloudera.director.azure.compute.instance.VirtualMachineScaleSetVM.create;
 import static com.cloudera.director.azure.compute.provider.AzureComputeProviderConfigurationProperty.REGION;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getBase64EncodedCustomData;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getFirstGroupOfUuid;
+import static com.cloudera.director.azure.compute.provider.VirtualMachineAllocator.GET_HOST_KEY_FINGERPRINT;
 import static com.cloudera.director.azure.utils.AzurePluginConfigHelper.getVMSSOpTimeout;
 import static com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_OPENSSH_PUBLIC_KEY;
 import static com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME;
-import static com.cloudera.director.spi.v2.util.Preconditions.checkArgument;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.microsoft.azure.management.compute.VirtualMachineScaleSetSkuTypes.fromSkuNameAndTier;
+
 import static java.util.Objects.requireNonNull;
+
+import static org.apache.commons.lang3.StringUtils.substring;
 
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
@@ -56,6 +63,7 @@ import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.microsoft.azure.SubResource;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.CachingTypes;
 import com.microsoft.azure.management.compute.ImageReference;
@@ -63,6 +71,7 @@ import com.microsoft.azure.management.compute.InstanceViewStatus;
 import com.microsoft.azure.management.compute.Plan;
 import com.microsoft.azure.management.compute.PowerState;
 import com.microsoft.azure.management.compute.PurchasePlan;
+import com.microsoft.azure.management.compute.RunCommandResult;
 import com.microsoft.azure.management.compute.StorageAccountTypes;
 import com.microsoft.azure.management.compute.VirtualMachineImages;
 import com.microsoft.azure.management.compute.VirtualMachineInstanceView;
@@ -163,7 +172,7 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
     checkArgument(minCount >= 0, "minCount is negative");
 
     LocalizationContext context = SimpleResourceTemplate.getTemplateLocalizationContext(localizationContext);
-    boolean useCustomImage = template.getConfigurationValue(USE_CUSTOM_MANAGED_IMAGE, context).equals(TRUE);
+    boolean useCustomImage = template.getConfigurationValue(USE_CUSTOM_MANAGED_IMAGE, context).equalsIgnoreCase(TRUE);
 
     WithCreate creatableVmss =
         new WithBasic(template, configRetriever, context, azure.virtualMachineScaleSets(), azure.networks())
@@ -172,7 +181,7 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
                     .andThen(new WithManagedDisks<>(template, context)) :
                 new WithNonCustomImage(template, context, azure.virtualMachineImages())
                     .andThen(new WithManagedDisks<>(template, context)))
-            .andThen(new WithOtherConfigs(template, context, msiManager.identities(), instanceIds.size()))
+            .andThen(new WithOtherConfigs(template, context, msiManager.identities(), azure.subscriptionId(), instanceIds.size()))
             .apply(null);
 
     Throwable[] exception = new Throwable[1];
@@ -295,7 +304,8 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
                 .deleteById(getId(
                     azure.subscriptionId(),
                     template.getConfigurationValue(COMPUTE_RESOURCE_GROUP, context),
-                    template.getGroupId()));
+                    ResourceProvider.VMSS,
+                    getVirtualMachineScaleSetName(template.getInstanceNamePrefix(), template.getGroupId())));
             return null;
           },
           "Deleting vmss " + template.getGroupId());
@@ -304,10 +314,63 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
       // TODO: shrink
       // 1. get whether scaling is enabled
       // 2. disable scaling
-      // 3. terminate instance(s)
+
+      timed(
+          () -> {
+            azure
+                .virtualMachineScaleSets()
+                .getById(getId(
+                    azure.subscriptionId(),
+                    template.getConfigurationValue(COMPUTE_RESOURCE_GROUP, context),
+                    ResourceProvider.VMSS,
+                    getVirtualMachineScaleSetName(template.getInstanceNamePrefix(), template.getGroupId())))
+                .virtualMachines()
+                .deleteInstances(
+                    instanceIds
+                        .stream()
+                        .map(VirtualMachineScaleSetAllocator::extractInstanceId)
+                        .toArray(String[]::new));
+            return null;
+          },
+          "Deleting vmss instances " + instanceIds);
+
       // 4. adjust min count and restore scaling if needed
-      LOG.warn("shrinking not supported, instance is removed later when group is terminated");
     }
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public Map<String, Set<String>> getHostKeyFingerprints(
+      LocalizationContext localizationContext,
+      AzureComputeInstanceTemplate template,
+      Collection<String> instanceIds) throws InterruptedException {
+
+    Map<String, Set<String>> instanceIdsToHostKeyFingerprints = Maps.newHashMap();
+    Map<String, Observable<RunCommandResult>> hostKeyObservables = Maps.newHashMap();
+    String resourceGroupName = template.getConfigurationValue(COMPUTE_RESOURCE_GROUP, localizationContext);
+
+    for (String instanceId : instanceIds) {
+      String extractedInstanceId = extractInstanceId(instanceId);
+      Observable<RunCommandResult> result = azure
+          .virtualMachineScaleSets()
+          .runCommandVMInstanceAsync(
+              resourceGroupName,
+              getVirtualMachineScaleSetName(template.getInstanceNamePrefix(), template.getGroupId()),
+              extractedInstanceId,
+              GET_HOST_KEY_FINGERPRINT);
+      hostKeyObservables.put(extractedInstanceId, result);
+    }
+
+    for (Map.Entry<String, Observable<RunCommandResult>> keyAndResult : hostKeyObservables.entrySet()) {
+      RunCommandResult runCommandResult = keyAndResult.getValue().toBlocking().first();
+      Set<String> fingerprints = AzureVirtualMachineMetadata
+          .getHostKeysFromCommandOutput(runCommandResult.value().get(0).message());
+      instanceIdsToHostKeyFingerprints.put(keyAndResult.getKey(), fingerprints);
+    }
+
+    return instanceIdsToHostKeyFingerprints;
   }
 
   private List<AzureComputeInstance<VirtualMachineScaleSetVM>> convert(
@@ -324,7 +387,7 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
 
     // TODO: if we find the API call to be slow we should try to use javarx join or groupjoin
     Map<String, PublicIPAddressInner> instanceIdToPublicIp =
-        !template.getConfigurationValue(PUBLIC_IP, context).equals(TRUE) ?
+        !template.getConfigurationValue(PUBLIC_IP, context).equalsIgnoreCase(TRUE) ?
             Collections.emptyMap() :
             azure
                 .publicIPAddresses()
@@ -345,12 +408,23 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
         .collect(Collectors.toList());
   }
 
-  private static String getId(String subscriptionId, String resourceGroupId, String groupId) {
+  private static String getId(
+      String subscriptionId,
+      String resourceGroupId,
+      ResourceProvider resourceProvider,
+      String groupId) {
     return String.format(
-        "/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachineScaleSets/%s",
+        "/subscriptions/%s/resourceGroups/%s/providers/%s/%s",
         subscriptionId,
         resourceGroupId,
+        resourceProvider.getName(),
         groupId);
+  }
+
+
+  private static String extractInstanceId(String instanceName) {
+    // instance name is ${user_provided_name}_${instance_id}, whereas ${instance_id} is numeric
+    return instanceName.substring(instanceName.lastIndexOf('_') + 1);
   }
 
   @VisibleForTesting
@@ -363,6 +437,21 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
       return matcher.group(1);
     }
     throw new IllegalStateException("Cannot parse public IP ID: " + publicIpId);
+  }
+
+  @VisibleForTesting
+  static String getVirtualMachineScaleSetName(String instanceNamePrefix, String groupId) {
+    checkArgument(StringUtils.isNotBlank(instanceNamePrefix));
+    checkArgument(StringUtils.isNotBlank(groupId));
+    return String.format("%s-%s", instanceNamePrefix, groupId);
+  }
+
+  // https://docs.microsoft.com/en-us/azure/templates/microsoft.compute/virtualmachinescalesets
+  @VisibleForTesting
+  static String getComputerNamePrefix(String instanceNamePrefix, String groupId) {
+    checkArgument(StringUtils.isNotBlank(instanceNamePrefix));
+    checkArgument(StringUtils.isNotBlank(groupId));
+    return String.format("%s-%s", substring(instanceNamePrefix, 0, 6), getFirstGroupOfUuid(groupId));
   }
 
   private List<AzureComputeInstance<VirtualMachineScaleSetVM>> sortAndTerminateLatest(
@@ -407,7 +496,8 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
         .getByIdAsync(getId(
             azure.subscriptionId(),
             template.getConfigurationValue(COMPUTE_RESOURCE_GROUP, context),
-            template.getGroupId()));
+            ResourceProvider.VMSS,
+            getVirtualMachineScaleSetName(template.getInstanceNamePrefix(), template.getGroupId())));
   }
 
   private static <T> T timed(Supplier<T> action, String message) {
@@ -481,15 +571,24 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
 
     @Override
     public WithOS apply(Void dontcare) {
-      String resourceGroupName = template.getConfigurationValue(COMPUTE_RESOURCE_GROUP, context);
+      String vnetResourceGroupName = template.getConfigurationValue(VIRTUAL_NETWORK_RESOURCE_GROUP, context);
+      String vnetName = template.getConfigurationValue(VIRTUAL_NETWORK, context);
+      String virtualMachineScaleSetName = getVirtualMachineScaleSetName(
+          template.getInstanceNamePrefix(),
+          template.getGroupId());
 
-      Network network = networks
-          .getByResourceGroup(resourceGroupName, template.getConfigurationValue(VIRTUAL_NETWORK, context));
+      Network network = networks.getByResourceGroup(vnetResourceGroupName, vnetName);
+      requireNonNull(
+          network,
+          String.format(
+              "network not found with resource group %s and network name %s",
+              vnetResourceGroupName,
+              vnetName));
 
       return virtualMachineScaleSets
-          .define(template.getGroupId())
+          .define(virtualMachineScaleSetName)
           .withRegion(Region.findByLabelOrName(configRetriever.apply(REGION, context)))
-          .withExistingResourceGroup(resourceGroupName)
+          .withExistingResourceGroup(template.getConfigurationValue(COMPUTE_RESOURCE_GROUP, context))
           .withSku(fromSkuNameAndTier(template.getConfigurationValue(VMSIZE, context), STANDARD_TIER))
           .withExistingPrimaryNetworkSubnet(network, template.getConfigurationValue(SUBNET_NAME, context))
           .withoutPrimaryInternetFacingLoadBalancer()
@@ -621,17 +720,20 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
     private final AzureComputeInstanceTemplate template;
     private final LocalizationContext context;
     private final Identities identities;
+    private final String subscriptionId;
     private final int count;
 
     WithOtherConfigs(
         AzureComputeInstanceTemplate template,
         LocalizationContext context,
         Identities identities,
+        String subscriptionId,
         int count) {
       checkArgument(count >= 0, "negative minCount");
       this.template = requireNonNull(template, "template is null");
       this.context = requireNonNull(context, "context is null");
       this.identities = requireNonNull(identities, "identities is null");
+      this.subscriptionId = requireNonNull(subscriptionId, "subscriptionId is null");
       this.count = count;
     }
 
@@ -639,17 +741,14 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
     public WithCreate apply(WithCreate withCreate) {
       requireNonNull(withCreate, "withCreate is null");
 
-      withCreate.withTags(template.getTags());
-      withCreate.withCapacity(count);
-      withCreate.withCustomData(getBase64EncodedCustomData(
-          template.getConfigurationValue(CUSTOM_DATA_UNENCODED, context),
-          template.getConfigurationValue(CUSTOM_DATA_ENCODED, context)));
-
-      String computerNamePrefix = template.getInstanceNamePrefix();
-      if (StringUtils.isBlank(computerNamePrefix)) {
-        computerNamePrefix = getFirstGroupOfUuid(withCreate.name());
-      }
-      withCreate.withComputerNamePrefix(computerNamePrefix);
+      withCreate.withTags(template.getTags())
+          .withCapacity(count)
+          .withCustomData(getBase64EncodedCustomData(
+              template.getConfigurationValue(CUSTOM_DATA_UNENCODED, context),
+              template.getConfigurationValue(CUSTOM_DATA_ENCODED, context)))
+          .withComputerNamePrefix(getComputerNamePrefix(
+              template.getInstanceNamePrefix(),
+              template.getGroupId()));
 
       VirtualMachineScaleSetInner inner = ((VirtualMachineScaleSetImpl) withCreate).inner();
       if (count > 100) {
@@ -664,7 +763,17 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
           .findFirst()
           .get();
 
-      if (template.getConfigurationValue(PUBLIC_IP, context).equals(TRUE)) {
+      networkInterfaceConfiguration
+          .withNetworkSecurityGroup(
+              new SubResource()
+                  .withId(
+                      getId(
+                          subscriptionId,
+                          template.getConfigurationValue(NETWORK_SECURITY_GROUP_RESOURCE_GROUP, context),
+                          ResourceProvider.VNET,
+                          template.getConfigurationValue(NETWORK_SECURITY_GROUP, context))));
+
+      if (template.getConfigurationValue(PUBLIC_IP, context).equalsIgnoreCase(TRUE)) {
         networkInterfaceConfiguration
             .ipConfigurations()
             .stream()
@@ -676,7 +785,7 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
                     .withIdleTimeoutInMinutes(PUBLIC_IP_IDLE_TIMEOUT_IN_MIN));
       }
 
-      if (template.getConfigurationValue(WITH_ACCELERATED_NETWORKING, context).equals(TRUE)) {
+      if (template.getConfigurationValue(WITH_ACCELERATED_NETWORKING, context).equalsIgnoreCase(TRUE)) {
         networkInterfaceConfiguration.withEnableAcceleratedNetworking(true);
       }
 
@@ -690,5 +799,20 @@ class VirtualMachineScaleSetAllocator implements InstanceAllocator {
 
       return withCreate;
     }
+  }
+
+  private enum ResourceProvider {
+    VMSS("Microsoft.Compute/virtualMachineScaleSets"),
+    VNET("Microsoft.Network/networkSecurityGroups");
+
+    String getName() {
+      return name;
+    }
+
+    ResourceProvider(String name) {
+      this.name = name;
+    }
+
+    private final String name;
   }
 }

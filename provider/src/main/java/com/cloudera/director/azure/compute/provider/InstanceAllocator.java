@@ -26,6 +26,7 @@ import com.microsoft.azure.management.compute.InstanceViewStatus;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Interface for instance manipulation.
@@ -84,6 +85,19 @@ public interface InstanceAllocator {
    * @param instanceIds         instance Ids
    */
   void delete(
+      LocalizationContext localizationContext,
+      AzureComputeInstanceTemplate template,
+      Collection<String> instanceIds)
+      throws InterruptedException;
+
+  /**
+   * Gets the host keys from the specified instances.
+   * @param localizationContext localization context of provider
+   * @param template            instance template
+   * @param instanceIds         instance Ids
+   * @return a map of instanceId to host key fingerprints for the specified instances
+   */
+  Map<String, Set<String>> getHostKeyFingerprints(
       LocalizationContext localizationContext,
       AzureComputeInstanceTemplate template,
       Collection<String> instanceIds)

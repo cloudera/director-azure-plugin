@@ -24,6 +24,7 @@ import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate
 import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.util.SimpleResourceTemplate;
 import com.google.common.base.Strings;
+import com.google.common.collect.Sets;
 import com.google.common.io.BaseEncoding;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.Disk;
@@ -35,6 +36,8 @@ import com.microsoft.azure.management.storage.StorageAccount;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Scanner;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -52,6 +55,7 @@ public class AzureVirtualMachineMetadata {
 
   private static final Logger LOG = LoggerFactory.getLogger(AzureVirtualMachineMetadata.class);
 
+  private static final Pattern MD5_PATTERN = Pattern.compile("^MD5:((\\p{Alnum}\\p{Alnum}:?){16})$");
   //
   // The Azure Resource Ids
   //
@@ -89,12 +93,12 @@ public class AzureVirtualMachineMetadata {
     useManagedDisks = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
         SimpleResourceTemplate.getTemplateLocalizationContext(localizationContext))
-        .equals("Yes");
+        .equalsIgnoreCase("yes");
     int numberOfManagedDisks = Integer.parseInt(template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT,
         SimpleResourceTemplate.getTemplateLocalizationContext(localizationContext)));
     hasPublicIp = template.getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP,
-        SimpleResourceTemplate.getTemplateLocalizationContext(localizationContext)).equals("Yes");
+        SimpleResourceTemplate.getTemplateLocalizationContext(localizationContext)).equalsIgnoreCase("yes");
     String commonResourceNamePrefix = getFirstGroupOfUuid(instanceId);
 
     // Virtual Machines
@@ -319,6 +323,45 @@ public class AzureVirtualMachineMetadata {
    */
   static String getVmName(String instanceId, String prefix) {
     return prefix + "-" + instanceId;
+  }
+
+  /**
+   * Retrieves the instance ID from a virtual machine's name given the prefix.
+   *
+   * @param vmName the virtual machine name
+   * @param prefix instance name prefix
+   * @return the virtual machine's ID
+   * @throws IllegalArgumentException if the vm name doesn't contain the prefix
+   */
+  static String getVmId(String vmName, String prefix) {
+    if (!vmName.startsWith(prefix + "-")) {
+      throw new IllegalArgumentException("Virtual machine name does not start with prefix " + prefix + "-");
+    }
+
+    return vmName.substring(prefix.length() + 1);
+  }
+
+  /**
+   * Returns a set of host keys given raw command input. The expected output is from
+   * ssh-keygen -l -E md5.
+   *
+   * @param message the raw command output
+   * @return a set of host key fingerprints
+   */
+  static Set<String> getHostKeysFromCommandOutput(String message) {
+    Set<String> fingerprints = Sets.newHashSet();
+
+    try (Scanner messageScanner = new Scanner(message)) {
+      while(messageScanner.hasNext()) {
+        Matcher matcher = MD5_PATTERN.matcher(messageScanner.next());
+
+        if (matcher.matches()) {
+          fingerprints.add(matcher.group(1));
+        }
+      }
+    }
+
+    return fingerprints;
   }
 
   /**

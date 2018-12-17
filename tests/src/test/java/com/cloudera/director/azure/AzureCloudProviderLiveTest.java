@@ -104,7 +104,7 @@ public class AzureCloudProviderLiveTest {
   }
 
   @Test
-  public void createResourceProviderWithInvalidCredentialsExpectExceptionThrown() throws Exception {
+  public void createResourceProviderWithInvalidCredentialsExpectSuccess() throws Exception {
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(AzureCredentialsConfiguration.CLIENT_SECRET.unwrap().getConfigKey(),
         "fake-client-secret");
@@ -112,7 +112,6 @@ public class AzureCloudProviderLiveTest {
     CloudProvider cloudProvider = launcher.createCloudProvider(AzureCloudProvider.ID,
         new SimpleConfiguration(map), Locale.getDefault());
 
-    thrown.expect(RuntimeException.class);
     cloudProvider.createResourceProvider(AzureComputeProvider.METADATA.getId(),
         TestHelper.buildValidDirectorLiveTestConfig());
   }

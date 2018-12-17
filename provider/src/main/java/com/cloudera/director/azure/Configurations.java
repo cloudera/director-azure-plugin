@@ -71,6 +71,7 @@ public final class Configurations {
   public static final String AZURE_SDK_CONFIG_READ_TIMEOUT_SECONDS =
       "azure-sdk-read-timeout-seconds";
   public static final String AZURE_SDK_CONFIG_MAX_IDLE_CONN = "azure-sdk-max-idle-connections";
+  public static final String AZURE_HOST_KEY_FINGERPRINT_COMMAND = "azure-host-key-fingerprint-command";
 
   public static final String AZURE_CONFIG_INSTANCE = "instance";
   public static final String AZURE_CONFIG_INSTANCE_STORAGE_ACCOUNT_TYPES =
@@ -160,11 +161,13 @@ public final class Configurations {
   private static final String CUSTOM_IMAGE_PLAN_NAME_KEY = "name";
 
   /**
-   * Parses the image fields from the VM image string by using it as either:
-   * a. a one line representation of an image in this format:
+   * Parses the image fields from the VM image string as one of:
+   * a. (recommended) an Image URN in this format:
+   *    publisher:offer:sku:version
+   *    See https://docs.microsoft.com/en-us/azure/virtual-machines/linux/cli-ps-findimage#terminology
+   * b. (deprecated) a one line representation of an image in this format (this is a Cloudera created format):
    *    /publisher/<publisher>/offer/<offer>/sku/<sku>/version/<version>
-   * otherwise
-   * b. an image specified in the configurable images file
+   * c. (not recommended) the name of an image specified in the configurable images file.
    *
    * @param template instance config
    * @param localizationContext localization context
@@ -173,8 +176,10 @@ public final class Configurations {
    */
   public static ImageReference parseImageFromConfig(final Configured template,
       LocalizationContext localizationContext) throws ValidationException {
-    final String imageNotUriMsg = "Image '%s' has the correct URI structure but does not follow " +
-        "the URI format: '/publisher/<publisher>/offer/<offer>/sku/<sku>/version/<version>'.";
+    final String imageNotUrnMsg = "Image '%s' has the correct URN structure but not all fields are set. " +
+        "The URN structure looks like: '<publisher>:<offer>:<sku>:<version>'.";
+    final String imageNotInlineMsg = "Image '%s' has the correct (deprecated) inline structure but does not follow " +
+        "the inline format of: '/publisher/<publisher>/offer/<offer>/sku/<sku>/version/<version>'.";
     final String imageMissingInConfigMsg = "Image '%s' does not exist in configurable image list.";
     final String imageConfigMissingRequiredFieldMsg = "Image '%s' config does not have all " +
         "required fields or fields are the wrong type. Check the configurable images file.";
@@ -194,13 +199,35 @@ public final class Configurations {
       throw new ValidationException(String.format(imageMightBeCustom, imageString));
     }
 
-    // see if the image follows the correct URI format
-    String[] splitPath = imageString.split("/");
-    if (splitPath.length == 9) {
+    // see if the image follows the URN format
+    String[] urnSplitPath = imageString.split(":");
+    if (urnSplitPath.length == 4) {
+      // the image is in URN form, build it
+
+      // URN form: publisher:offer:sku:version
+      String publisher = urnSplitPath[0];
+      String offer = urnSplitPath[1];
+      String sku = urnSplitPath[2];
+      String version = urnSplitPath[3];
+
+      if (publisher == null || offer == null || sku == null || version == null) {
+        throw new ValidationException(String.format(imageNotUrnMsg, imageString));
+      }
+
+      return new ImageReference()
+          .withPublisher(publisher)
+          .withOffer(offer)
+          .withSku(sku)
+          .withVersion(version);
+    }
+
+    // the image string is not a URN - see if the image follows the deprecated inline format
+    String[] inlineSplitPath = imageString.split("/");
+    if (inlineSplitPath.length == 9) {
       // the image is in URI form, build it
       Map<String, String> imageMap = new HashMap<>();
-      for (int i = 1; i < splitPath.length; i += 2) {
-        imageMap.put(splitPath[i], splitPath[i + 1]);
+      for (int i = 1; i < inlineSplitPath.length; i += 2) {
+        imageMap.put(inlineSplitPath[i], inlineSplitPath[i + 1]);
       }
 
       String publisher = imageMap.get(Configurations.AZURE_IMAGE_PUBLISHER);
@@ -209,7 +236,7 @@ public final class Configurations {
       String version = imageMap.get(Configurations.AZURE_IMAGE_VERSION);
 
       if (publisher == null || offer == null || sku == null || version == null) {
-        throw new ValidationException(String.format(imageNotUriMsg, imageString));
+        throw new ValidationException(String.format(imageNotInlineMsg, imageString));
       }
 
       return new ImageReference()
@@ -217,26 +244,26 @@ public final class Configurations {
           .withOffer(offer)
           .withSku(sku)
           .withVersion(version);
-    } else {
-      // the image string is not a URI - see if the image exists in images.conf
-      Config image;
-      try {
-        image = AzurePluginConfigHelper.getConfigurableImages().getConfig(imageString);
-      } catch (ConfigException e) {
-        throw new ValidationException(String.format(imageMissingInConfigMsg, imageString));
-      }
+    }
 
-      // the image string references an image in images.conf - see if that image has the right fields
-      try {
-        // the image exists in images.conf, try to build the image with its fields
-        return new ImageReference()
-            .withPublisher(image.getString(Configurations.AZURE_IMAGE_PUBLISHER))
-            .withOffer(image.getString(Configurations.AZURE_IMAGE_OFFER))
-            .withSku(image.getString(Configurations.AZURE_IMAGE_SKU))
-            .withVersion(image.getString(Configurations.AZURE_IMAGE_VERSION));
-      } catch (ConfigException e) {
-        throw new ValidationException(String.format(imageConfigMissingRequiredFieldMsg, imageString));
-      }
+    // the image string is not a URN or an inline - see if the image exists in images.conf
+    Config image;
+    try {
+      image = AzurePluginConfigHelper.getConfigurableImages().getConfig(imageString);
+    } catch (ConfigException e) {
+      throw new ValidationException(String.format(imageMissingInConfigMsg, imageString));
+    }
+
+    // the image string references an image in images.conf - see if that image has the right fields
+    try {
+      // the image exists in images.conf, try to build the image with its fields
+      return new ImageReference()
+          .withPublisher(image.getString(Configurations.AZURE_IMAGE_PUBLISHER))
+          .withOffer(image.getString(Configurations.AZURE_IMAGE_OFFER))
+          .withSku(image.getString(Configurations.AZURE_IMAGE_SKU))
+          .withVersion(image.getString(Configurations.AZURE_IMAGE_VERSION));
+    } catch (ConfigException e) {
+      throw new ValidationException(String.format(imageConfigMissingRequiredFieldMsg, imageString));
     }
   }
 

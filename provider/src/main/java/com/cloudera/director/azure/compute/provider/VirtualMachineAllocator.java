@@ -23,9 +23,11 @@ import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMe
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getComputerName;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getDnsName;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getFirstGroupOfUuid;
+import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getVmId;
 import static com.cloudera.director.azure.compute.provider.AzureVirtualMachineMetadata.getVmName;
 import static java.util.Objects.requireNonNull;
 
+import com.cloudera.director.azure.AzureExceptions;
 import com.cloudera.director.azure.Configurations;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstance;
 import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
@@ -41,7 +43,9 @@ import com.github.rholder.retry.RetryerBuilder;
 import com.github.rholder.retry.StopStrategies;
 import com.github.rholder.retry.WaitStrategies;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import com.microsoft.azure.CloudException;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.compute.AvailabilitySet;
@@ -51,12 +55,12 @@ import com.microsoft.azure.management.compute.DiskSkuTypes;
 import com.microsoft.azure.management.compute.ImageReference;
 import com.microsoft.azure.management.compute.InstanceViewStatus;
 import com.microsoft.azure.management.compute.PurchasePlan;
+import com.microsoft.azure.management.compute.RunCommandInput;
+import com.microsoft.azure.management.compute.RunCommandResult;
 import com.microsoft.azure.management.compute.StorageAccountTypes;
 import com.microsoft.azure.management.compute.VirtualMachine;
 import com.microsoft.azure.management.compute.VirtualMachineImage;
 import com.microsoft.azure.management.compute.VirtualMachineSizeTypes;
-import com.microsoft.azure.management.graphrbac.ActiveDirectoryGroup;
-import com.microsoft.azure.management.graphrbac.implementation.GraphRbacManager;
 import com.microsoft.azure.management.msi.Identity;
 import com.microsoft.azure.management.msi.implementation.MSIManager;
 import com.microsoft.azure.management.network.Network;
@@ -91,6 +95,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import rx.Completable;
+import rx.Observable;
 import rx.Scheduler;
 import rx.functions.Action0;
 import rx.functions.Action1;
@@ -104,21 +109,24 @@ public class VirtualMachineAllocator implements InstanceAllocator {
   private static final int POLLING_INTERVAL_SECONDS = 5;
   private static final Logger LOG = LoggerFactory.getLogger(VirtualMachineAllocator.class);
 
+  public static final RunCommandInput GET_HOST_KEY_FINGERPRINT = new RunCommandInput()
+      .withCommandId("RunShellScript")
+      .withScript(Lists.newArrayList(
+          AzurePluginConfigHelper.getHostKeyFingerprintCommand()
+      ));
+
   // custom scheduler for async operations.
   private final Scheduler scheduler = Schedulers.newThread();
 
   private final Azure azure;
-  private final GraphRbacManager rbacManager;
   private final MSIManager msiManager;
   private final BiFunction<AzureComputeProviderConfigurationProperty, LocalizationContext, String> configRetriever;
 
   public VirtualMachineAllocator(
       Azure azure,
-      GraphRbacManager rbacManager,
       MSIManager msiManager,
       BiFunction<AzureComputeProviderConfigurationProperty, LocalizationContext, String> configRetriever) {
     this.azure = requireNonNull(azure, "azure is null");
-    this.rbacManager = requireNonNull(rbacManager, "rbacManager is null");
     this.msiManager = requireNonNull(msiManager, "msiManager is null");
     this.configRetriever = requireNonNull(configRetriever, "configRetriever is null");
   }
@@ -160,22 +168,10 @@ public class VirtualMachineAllocator implements InstanceAllocator {
         templateLocalizationContext);
     final boolean createPublicIp = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP,
-        templateLocalizationContext).equals("Yes");
-    String userAssignedMsiName = template.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME,
-        templateLocalizationContext);
-    String userAssignedMsiRg = template.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP,
-        templateLocalizationContext);
-    final boolean useImplicitMsi = template.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI,
-        templateLocalizationContext).equals("Yes");
-    final String aadGroupName = template.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME,
-        templateLocalizationContext);
+        templateLocalizationContext).equalsIgnoreCase("yes");
     final boolean withStaticPrivateIpAddress = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.WITH_STATIC_PRIVATE_IP_ADDRESS,
-        templateLocalizationContext).equals("Yes");
+        templateLocalizationContext).equalsIgnoreCase("yes");
 
     // Include time for preparing VM create into total VM create time
     final StopWatch stopwatch = new StopWatch();
@@ -238,6 +234,7 @@ public class VirtualMachineAllocator implements InstanceAllocator {
         .synchronizedList(new ArrayList<String>());
     final Collection<AzureComputeInstance<com.cloudera.director.azure.compute.instance.VirtualMachine>>
         successfullyCreatedInstances = Collections.synchronizedList(new ArrayList<>());
+    final Set<Exception> encounteredException = Sets.newConcurrentHashSet();
 
     // Create VMs in parallel
     LOG.info("Starting to create the following instances {}.", instanceIds);
@@ -270,6 +267,9 @@ public class VirtualMachineAllocator implements InstanceAllocator {
                   perVmStopWatch.stop();
                   LOG.error("Failed to create VM {} after {} seconds due to:", vmName,
                       stopwatch.getTime() / 1000, t);
+                  if (t != null && t instanceof Exception) {
+                    encounteredException.add((Exception) t);
+                  }
                   cleanupVmAndResourcesHelper(azure, localizationContext, template, vmName, commonResourceNamePrefix,
                       createPublicIp);
                 }
@@ -287,30 +287,6 @@ public class VirtualMachineAllocator implements InstanceAllocator {
                   LOG.info("Successfully created VM: {} in {} seconds.", vmName,
                       perVmStopWatch.getTime() / 1000);
 
-                  // support both uaMSI and saMSI fields; if both are present only use uaMSI and skip the saMSI work
-                  if ((StringUtils.isEmpty(userAssignedMsiName) && StringUtils.isEmpty(userAssignedMsiRg)) &&
-                      (useImplicitMsi && !StringUtils.isEmpty(aadGroupName))) {
-                    // FIXME: delete the implicit MSI to group logic once explicit MSI is available
-                    ActiveDirectoryGroup aadGroup = rbacManager.groups()
-                        .getByName(aadGroupName);
-                    if (aadGroup == null) {
-                      LOG.error("AAD group '{}' does not exist in Tenant {}", aadGroupName,
-                          rbacManager.tenantId());
-                      return;
-                    }
-                    String msiObjId = result.get(vmCreatable.key()).systemAssignedManagedServiceIdentityPrincipalId();
-                    try {
-                      aadGroup.update().withMember(msiObjId).apply();
-                    } catch (Exception e) {
-                      LOG.error("Failed to add implicit MSI {} to AAD group {} for VM {} due to:",
-                          msiObjId, aadGroupName, vmName, e);
-                      return;
-                    }
-                    LOG.info("Successfully added implicit MSI {} to AAD group {} for VM {}.",
-                        msiObjId, aadGroupName, vmName);
-                  }
-
-                  // Successfully created VM that failed MSI group join are not counted.
                   successfullyCreatedInstanceIds.add(instanceId);
                   successfullyCreatedInstances
                       .add(new AzureComputeInstance<>(template, instanceId, create(result.get(vmCreatable.key()))));
@@ -345,6 +321,9 @@ public class VirtualMachineAllocator implements InstanceAllocator {
 
     stopwatch.stop();
 
+    // Default error message for failure to create VMs.
+    String errorMessage = "Failed to create enough instances.";
+
     // timeout handling
     if (vmCreates.size() > 0) {
       LOG.error("Creation for the following VMs {} after {} seconds: {}.",
@@ -354,6 +333,9 @@ public class VirtualMachineAllocator implements InstanceAllocator {
         // cancelling future does not trigger error handling
         future.cancel(true);
       }
+      errorMessage = interrupted ?
+          "Failed to create enough instances: instance creation interrupted." :
+          "Failed to create enough instances: instance creation timed out.";
     } else {
       LOG.info("Create Virtual Machines: it took {} seconds to create {} out of {} VMs with the " +
               "prefix {} from the group with instanceIds of: {}.",
@@ -367,15 +349,12 @@ public class VirtualMachineAllocator implements InstanceAllocator {
           successfullyCreatedInstanceIds.size(), instanceIds.size(), minCount, successfullyCreatedInstanceIds,
           instanceIds);
 
-      // Failed VMs and their resources are already cleaned up as failure callbacks earlier.
-      // Delete all the successfully created VMs that failed the implicit MSI group join and the
-      // VMs that are still in flight (timed out).
-
+      // Delete all the VMs that are still in flight (timed out).
       delete(localizationContext, template, instanceIds);
+      LOG.info("Allocate failure: cleanup via delete() has succeeded.");
 
       // failure
-      LOG.info("Allocate failure: cleanup via delete() has succeeded.");
-      throw new UnrecoverableProviderException("Failed to create enough instances.");
+      throw AzureExceptions.propagateUnrecoverable(errorMessage, encounteredException);
     } else {
       Collection<String> instanceIdsToDelete = getNewSubset(instanceIds, successfullyCreatedInstanceIds);
       if (instanceIdsToDelete.isEmpty()) {
@@ -388,10 +367,7 @@ public class VirtualMachineAllocator implements InstanceAllocator {
             successfullyCreatedInstanceIds.size(), instanceIds.size(), minCount, successfullyCreatedInstanceIds,
             instanceIdsToDelete);
 
-        // Failed VMs and their resources are already cleaned up as failure callbacks earlier.
-        // Delete all the successfully created VMs that failed the implicit MSI group join and the
-        // VMs that are still in flight (timed out).
-
+        // Delete all the VMs that are still in flight (timed out).
         delete(localizationContext, template, instanceIdsToDelete);
         LOG.info("Allocate success: cleanup via delete() has succeeded.");
       }
@@ -525,9 +501,9 @@ public class VirtualMachineAllocator implements InstanceAllocator {
     boolean useManagedDisks = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
         SimpleResourceTemplate.getTemplateLocalizationContext(localizationContext))
-        .equals("Yes");
+        .equalsIgnoreCase("yes");
     boolean hasPublicIp = template.getConfigurationValue(AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP,
-        SimpleResourceTemplate.getTemplateLocalizationContext(localizationContext)).equals("Yes");
+        SimpleResourceTemplate.getTemplateLocalizationContext(localizationContext)).equalsIgnoreCase("yes");
 
     // short circuit return (success) if there aren't any instance ids to return
     if (instanceIds.isEmpty()) {
@@ -548,7 +524,8 @@ public class VirtualMachineAllocator implements InstanceAllocator {
       // throw an Unrecoverable if there's any problems getting resource ids
       LOG.error("Error occurred while collecting resource ids for deletion. No resources deleted and an " +
           "UnrecoverableProviderException will be thrown. Error: ", e);
-      throw new UnrecoverableProviderException(e);
+      String errorMessage = "Error occurred while collecting resource ids for deletion.";
+      throw new UnrecoverableProviderException(errorMessage, e);
     }
     LOG.info("All Resource Ids in Resource Group {} to delete are gathered. {}",
         rgName, AzureVirtualMachineMetadata.metadataListToString(metadatas)
@@ -557,7 +534,7 @@ public class VirtualMachineAllocator implements InstanceAllocator {
     StopWatch stopwatch = new StopWatch();
     stopwatch.start();
 
-    // Throw an UnrecoverableProviderException with a detailed error message if any of the deletes failed
+    // Log a detailed error message if any of the deletes failed
     StringBuilder deleteFailedBuilder = new StringBuilder(
         String.format("Delete Failure - not all resources in Resource Group %s were deleted:", rgName));
 
@@ -596,12 +573,44 @@ public class VirtualMachineAllocator implements InstanceAllocator {
       deleteFailedBuilder.setLength(deleteFailedBuilder.length() - 1); // delete trailing ";"
       deleteFailedBuilder.append(".");
 
-      throw new UnrecoverableProviderException(deleteFailedBuilder.toString());
+      LOG.error(deleteFailedBuilder.toString());
+      String errorMessage = "Failed to delete cluster resources due to an Azure provider error. " +
+          "These resources may still be running. Try deleting the cluster again, or contact support if this error persists.";
+      throw new UnrecoverableProviderException(errorMessage);
     }
 
     LOG.info("Successfully deleted all {} of {} VMs + dependent resources in Resource Group {} in {} seconds. " +
             "Instance prefix: {}. VMs Ids: {}.", instanceIds.size(), instanceIds.size(), rgName, stopwatch.getTime() / 1000,
         template.getInstanceNamePrefix(), instanceIds);
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public Map<String, Set<String>> getHostKeyFingerprints(
+      LocalizationContext localizationContext,
+      AzureComputeInstanceTemplate template,
+      Collection<String> instanceIds) throws InterruptedException {
+    Map<String, Set<String>> instanceIdsToHostKeyFingerprints = Maps.newHashMap();
+    Map<String, Observable<RunCommandResult>> hostKeyObservables = Maps.newHashMap();
+
+    String prefix = template.getInstanceNamePrefix();
+
+    for (AzureComputeInstance<com.cloudera.director.azure.compute.instance.VirtualMachine> azureComputeInstance :
+        find(localizationContext, template, instanceIds)) {
+      com.cloudera.director.azure.compute.instance.VirtualMachine vm = azureComputeInstance.unwrap();
+      hostKeyObservables.put(getVmId(vm.name(), prefix), vm.runCommandAsync(GET_HOST_KEY_FINGERPRINT));
+    }
+
+    for (Map.Entry<String, Observable<RunCommandResult>> keyAndResult : hostKeyObservables.entrySet()) {
+      RunCommandResult runCommandResult = keyAndResult.getValue().toBlocking().first();
+      Set<String> fingerprints =
+          AzureVirtualMachineMetadata.getHostKeysFromCommandOutput(runCommandResult.value().get(0).message());
+      instanceIdsToHostKeyFingerprints.put(keyAndResult.getKey(), fingerprints);
+    }
+
+    return instanceIdsToHostKeyFingerprints;
   }
 
   /**
@@ -696,10 +705,10 @@ public class VirtualMachineAllocator implements InstanceAllocator {
         AzureComputeInstanceTemplateConfigurationProperty.SUBNET_NAME, templateLocalizationContext);
     final boolean createPublicIp = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP,
-        templateLocalizationContext).equals("Yes");
+        templateLocalizationContext).equalsIgnoreCase("yes");
     final boolean withAcceleratedNetworking = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.WITH_ACCELERATED_NETWORKING,
-        templateLocalizationContext).equals("Yes");
+        templateLocalizationContext).equalsIgnoreCase("yes");
     HashMap<String, String> tags =
         template.getTags().isEmpty() ? null : new HashMap<>(template.getTags());
 
@@ -863,7 +872,7 @@ public class VirtualMachineAllocator implements InstanceAllocator {
         templateLocalizationContext);
     boolean useManagedDisks = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
-        templateLocalizationContext).equals("Yes");
+        templateLocalizationContext).equalsIgnoreCase("yes");
     String location = configRetriever.apply(
         AzureComputeProviderConfigurationProperty.REGION, templateLocalizationContext);
     String computeRgName = template.getConfigurationValue(
@@ -891,16 +900,13 @@ public class VirtualMachineAllocator implements InstanceAllocator {
     String commonResourceNamePrefix = getFirstGroupOfUuid(instanceId);
     final boolean useCustomImage = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE,
-        templateLocalizationContext).equals("Yes");
+        templateLocalizationContext).equalsIgnoreCase("yes");
     String userAssignedMsiName = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME,
         templateLocalizationContext);
     String userAssignedMsiRg = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP,
         templateLocalizationContext);
-    final boolean useImplicitMsi = template.getConfigurationValue(
-        AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI,
-        templateLocalizationContext).equals("Yes");
     String customDataUnencoded = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_DATA_UNENCODED,
         templateLocalizationContext);
@@ -1046,12 +1052,9 @@ public class VirtualMachineAllocator implements InstanceAllocator {
       finalVmCreatable.withTags(tags);
     }
 
-    // support both uaMSI and saMSI; if both are present only use uaMSI
     if (!StringUtils.isEmpty(userAssignedMsiName) && !StringUtils.isEmpty(userAssignedMsiRg)) {
       Identity identity = msiManager.identities().getByResourceGroup(userAssignedMsiRg, userAssignedMsiName);
       finalVmCreatable.withExistingUserAssignedManagedServiceIdentity(identity);
-    } else if (useImplicitMsi) {
-      finalVmCreatable.withSystemAssignedManagedServiceIdentity();
     }
 
     LOG.debug("VirtualMachine Creatable {} built successfully.", instanceId);
@@ -1090,7 +1093,7 @@ public class VirtualMachineAllocator implements InstanceAllocator {
         templateLocalizationContext);
     final boolean useManagedDisks = template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.MANAGED_DISKS,
-        templateLocalizationContext).equals("Yes");
+        templateLocalizationContext).equalsIgnoreCase("yes");
     final int dataDiskCount = Integer.parseInt(template.getConfigurationValue(
         AzureComputeInstanceTemplateConfigurationProperty.DATA_DISK_COUNT,
         templateLocalizationContext));
@@ -1181,6 +1184,8 @@ public class VirtualMachineAllocator implements InstanceAllocator {
 
     HashSet<Completable> deleteCompletables = new HashSet<>();
     final List<String> successIds = Collections.synchronizedList(new ArrayList<String>());
+    StringBuffer specificErrorAccumulator =
+        new StringBuffer(" ").append(resourceName).append(": [");
 
     LOG.info("Start deleting these {} {}: {}.", resourceIds.size(), resourceName, resourceIds);
 
@@ -1200,6 +1205,8 @@ public class VirtualMachineAllocator implements InstanceAllocator {
             @Override
             public void call(Throwable throwable) {
               LOG.error("Failed to delete: {}. Detailed reason: ", id, throwable);
+              specificErrorAccumulator.append(
+                  String.format(" { %s: %s },", id, throwable.getMessage()));
             }
           })
           // count successful deletes
@@ -1220,6 +1227,9 @@ public class VirtualMachineAllocator implements InstanceAllocator {
                   // resource. this is sufficient to identify the potentially orphaned resources.
                   LOG.error("Deletion of {} has timed out, check the corresponding Azure " +
                       "Resource Group for orphaned resources.", id);
+                  specificErrorAccumulator.append(
+                      String.format(" { %s: Delete timed out after %d seconds. },",
+                          id, AzurePluginConfigHelper.getAzureBackendOpPollingTimeOut()));
                 }
               }));
       deleteCompletables.add(c);
@@ -1241,7 +1251,9 @@ public class VirtualMachineAllocator implements InstanceAllocator {
       resourceIds.removeAll(successIds);
       LOG.error("Deleted {} out of {} {}. Failed to delete these: {}.",
           successIds.size(), totalResources, resourceName, resourceIds);
-      errorAccumulator.append(" ").append(resourceName).append("s: ").append(resourceIds).append(";");
+      // delete trailing ","
+      specificErrorAccumulator.setLength(specificErrorAccumulator.length() - 1);
+      errorAccumulator.append(specificErrorAccumulator).append(" ];");
 
       return false;
     } else {

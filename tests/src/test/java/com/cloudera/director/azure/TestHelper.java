@@ -56,7 +56,6 @@ public class TestHelper {
   // CLI parameter names
   private static final String LIVE_TEST_RESOURCE_GROUP_KEY = "azure.live.rg";
   private static final String LIVE_TEST_REGION_KEY = "azure.live.region";
-  private static final String LIVE_TEST_AAD_GROUP_NAME = "azure.live.aadGroupName";
   private static final String LIVE_TEST_SSH_PUBLIC_KEY_PATH = "test.azure.sshPublicKeyPath";
   private static final String LIVE_TEST_SSH_PRIVATE_KEY_PATH = "test.azure.sshPrivateKeyPath";
 
@@ -69,9 +68,10 @@ public class TestHelper {
       System.getProperty(AzureCredentialsConfiguration.SUBSCRIPTION_ID.unwrap().getConfigKey());
 
   public static final String TEST_EMPTY_CONFIG = "";
+  public static final String TEST_CENTOS_IMAGE_URN = "cloudera:cloudera-centos-os:7_4:latest";
+  public static final String TEST_RHEL_IMAGE_URN = "RedHat:RHEL:7.4:latest";
   public static final String TEST_CENTOS_IMAGE_NAME = "cloudera-centos-74-latest";
-  public static final String TEST_RHEL_IMAGE_NAME = "redhat-rhel-74-latest";
-  public static final String TEST_VM_SIZE = "STANDARD_DS12_V2";
+  public static final String TEST_VM_SIZE = "Standard_DS12_v2";
   public static final String TEST_DATA_DISK_SIZE = "512";
   public static final String TEST_AVAILABILITY_SET_MANAGED = "managedAS";
   public static final String TEST_AVAILABILITY_SET_UNMANAGED = "unmanagedAS";
@@ -80,9 +80,6 @@ public class TestHelper {
   public static final String TEST_SUBNET = "default";
   public static final String TEST_HOST_FQDN_SUFFIX = "cdh-cluster.internal";
   public static final String TEST_USER_ASSIGNED_MSI_NAME = "ua-msi";
-  public static final String TEST_AAD_GROUP_NAME =
-      System.getProperty(LIVE_TEST_AAD_GROUP_NAME) !=
-          null ? System.getProperty(LIVE_TEST_AAD_GROUP_NAME) : "testAadGroup";
 
   public static final String TEST_CUSTOM_DATA_UNENCODED = "#!/bin/sh\ntouch /tmp/jason\nexit 0";
   public static final String TEST_CUSTOM_DATA_ENCODED =
@@ -101,14 +98,6 @@ public class TestHelper {
    */
   public static boolean runLiveTests() {
     String liveString = System.getProperty("test.azure.live");
-    return Boolean.parseBoolean(liveString);
-  }
-
-  /**
-   * @return true if run implicit MSI live tests.
-   */
-  public static boolean runImplicitMsiLiveTests() {
-    String liveString = System.getProperty("test.azure.implicitMsiLive");
     return Boolean.parseBoolean(liveString);
   }
 
@@ -230,7 +219,7 @@ public class TestHelper {
     map.put(InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX
         .unwrap().getConfigKey(), AzureCloudProvider.ID);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
-        TEST_CENTOS_IMAGE_NAME);
+        TEST_CENTOS_IMAGE_URN);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE.unwrap().getConfigKey(),
         TEST_VM_SIZE);
     map.put(ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME
@@ -265,10 +254,6 @@ public class TestHelper {
         TEST_EMPTY_CONFIG);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
         TEST_EMPTY_CONFIG);
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap().getConfigKey(),
-        TEST_EMPTY_CONFIG);
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME.unwrap().getConfigKey(),
-        TEST_EMPTY_CONFIG);
 
     return map;
   }
@@ -296,7 +281,7 @@ public class TestHelper {
     map.put(InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX.unwrap().getConfigKey(),
         "director");
     map.put(AzureComputeInstanceTemplateConfigurationProperty.IMAGE.unwrap().getConfigKey(),
-        TEST_CENTOS_IMAGE_NAME);
+        TEST_CENTOS_IMAGE_URN);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.VMSIZE.unwrap().getConfigKey(),
         TEST_VM_SIZE);
     map.put(ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_USERNAME
@@ -336,10 +321,6 @@ public class TestHelper {
     map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_NAME.unwrap().getConfigKey(),
         TEST_EMPTY_CONFIG);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.USER_ASSIGNED_MSI_RESOURCE_GROUP.unwrap().getConfigKey(),
-        TEST_EMPTY_CONFIG);
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.USE_IMPLICIT_MSI.unwrap().getConfigKey(),
-        TEST_EMPTY_CONFIG);
-    map.put(AzureComputeInstanceTemplateConfigurationProperty.IMPLICIT_MSI_AAD_GROUP_NAME.unwrap().getConfigKey(),
         TEST_EMPTY_CONFIG);
     map.put(AzureComputeInstanceTemplateConfigurationProperty.WITH_STATIC_PRIVATE_IP_ADDRESS.unwrap().getConfigKey(),
         "Yes");
