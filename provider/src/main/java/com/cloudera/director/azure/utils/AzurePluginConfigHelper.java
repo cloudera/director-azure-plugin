@@ -18,6 +18,7 @@ package com.cloudera.director.azure.utils;
 
 import com.cloudera.director.azure.AzureLauncher;
 import com.cloudera.director.azure.Configurations;
+import com.cloudera.director.spi.v2.common.http.HttpProxyParameters;
 import com.microsoft.azure.management.storage.SkuName;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigException;
@@ -47,6 +48,9 @@ public class AzurePluginConfigHelper {
   private static Config azurePluginConfig = null;
   // images.conf
   private static Config configurableImages = null;
+
+  // HTTP proxy settings
+  private static HttpProxyParameters httpProxyParameters = null;
 
   /**
    * Helper to read and parse two config files and merge them together as follows:
@@ -212,12 +216,36 @@ public class AzurePluginConfigHelper {
   }
 
   /**
+   * Sets the HTTP proxy parameters. The proxy parameters can only be set once, and will remain the same
+   * until Director is restarted.
+   *
+   * @param httpProxyParameters the HTTP proxy parameters
+   */
+  public synchronized static void setHttpProxyParameters(HttpProxyParameters httpProxyParameters) {
+    if (AzurePluginConfigHelper.httpProxyParameters == null) {
+      LOG.info("Setting HTTP proxy.");
+      AzurePluginConfigHelper.httpProxyParameters = httpProxyParameters;
+    } else {
+      LOG.warn("HTTP proxy already initialized - ignoring the new config.");
+    }
+  }
+
+  /**
    * Gets the currently set images config.
    *
    * @return the images config, or null if not set.
    */
   public synchronized static Config getConfigurableImages() {
     return configurableImages;
+  }
+
+  /**
+   * Gets the HTTP proxy parameters.
+   *
+   * @return the HTTP proxy parameters, or null if not set.
+   */
+  public synchronized static HttpProxyParameters getHttpProxyParameters() {
+    return httpProxyParameters;
   }
 
   /**

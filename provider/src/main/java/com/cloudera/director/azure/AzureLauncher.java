@@ -76,6 +76,7 @@ public class AzureLauncher extends AbstractLauncher {
         .mergeConfig(Configurations.AZURE_CONFIGURABLE_IMAGES_FILE, configurationDirectory);
 
     AzurePluginConfigHelper.setConfigurableImages(imagesConfig);
+    AzurePluginConfigHelper.setHttpProxyParameters(httpProxyParameters);
   }
 
   /**

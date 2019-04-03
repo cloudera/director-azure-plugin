@@ -733,10 +733,13 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
   }
 
   /**
-   * Checks that VM image string is either:
-   * a. a URI one line representation of an image in this format:
+   * Checks that the VM image string is one of:
+   * a. (recommended) an Image URN in this format:
+   *    publisher:offer:sku:version
+   *    See https://docs.microsoft.com/en-us/azure/virtual-machines/linux/cli-ps-findimage#terminology
+   * b. (deprecated) a one line representation of an image in this format (this is a Cloudera created format):
    *    /publisher/<publisher>/offer/<offer>/sku/<sku>/version/<version>
-   * b. otherwise, an image specified in the configurable images file
+   * c. (not recommended) the name of an image specified in the configurable images file.
    *
    * If it's a valid image definition then check that the image exists in the Azure Marketplace.
    *

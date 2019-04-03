@@ -94,6 +94,19 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
       .required(true)
       .build()),
 
+  USE_VMSS(new SimpleConfigurationPropertyBuilder()
+      .configKey(ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.AUTOMATIC
+          .unwrap().getConfigKey())
+      .name("Use Virtual Machine Scale Set (VMSS)")
+      .required(false)
+      .defaultDescription(
+          "Whether to use Azure Virtual Machine Scale Sets (VMSS).<br /><a target='_blank' " +
+              "href='https://docs.microsoft.com/en-us/azure/virtual-machine-scale-sets/overview'>" +
+              "More Information</a>"
+      )
+      .widget(ConfigurationProperty.Widget.CHECKBOX)
+      .build()),
+
   COMPUTE_RESOURCE_GROUP(new SimpleConfigurationPropertyBuilder()
       .configKey("computeResourceGroup")
       .name("Compute Resource Group")

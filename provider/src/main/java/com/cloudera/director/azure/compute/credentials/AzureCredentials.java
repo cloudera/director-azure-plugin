@@ -17,8 +17,11 @@
 package com.cloudera.director.azure.compute.credentials;
 
 import static com.cloudera.director.azure.Configurations.AZURE_USER_AGENT_PREFIX;
+import static java.util.Objects.requireNonNull;
 
 import com.cloudera.director.azure.utils.AzurePluginConfigHelper;
+import com.cloudera.director.azure.utils.SSLTunnelSocketFactory;
+import com.cloudera.director.spi.v2.common.http.HttpProxyParameters;
 import com.cloudera.director.spi.v2.model.Configured;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.exception.InvalidCredentialsException;
@@ -28,11 +31,22 @@ import com.microsoft.azure.credentials.ApplicationTokenCredentials;
 import com.microsoft.azure.management.Azure;
 import com.microsoft.azure.management.msi.implementation.MSIManager;
 
+import java.net.InetSocketAddress;
+import java.net.Proxy;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+import javax.annotation.Nonnull;
+import javax.annotation.Nullable;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import okhttp3.Authenticator;
+import okhttp3.Credentials;
+import okhttp3.Request;
+import okhttp3.Response;
+import okhttp3.Route;
 
 /**
  * Credentials for authenticating with Azure backend. Assuming service principal style
@@ -42,7 +56,10 @@ public class AzureCredentials {
 
   private static final Logger LOG = LoggerFactory.getLogger(AzureCredentials.class);
 
-  private final ApplicationTokenCredentials credentials;
+  private final String clientId;
+  private final String domain;
+  private final String secret;
+  private final AzureEnvironment azureEnvironment;
 
   private final String subId;
   private final String userAgentPid;
@@ -81,8 +98,6 @@ public class AzureCredentials {
     }
 
     this.subId = config.getConfigurationValue(AzureCredentialsConfiguration.SUBSCRIPTION_ID, local);
-    AzureEnvironment azureEnvironment;
-
     // if MGMT_URL is set use it to find the AzureEnvironment
     String managementUrl =
         config.getConfigurationValue(AzureCredentialsConfiguration.MGMT_URL, local);
@@ -94,10 +109,10 @@ public class AzureCredentials {
           AzureCredentialsConfiguration.MGMT_URL.unwrap().getConfigKey(),
           AzureCredentialsConfiguration.AZURE_CLOUD_ENVIRONMENT.unwrap().getConfigKey());
 
-      azureEnvironment = AzureCloudEnvironment
+      this.azureEnvironment = AzureCloudEnvironment
           .getAzureEnvironmentFromDeprecatedConfig(managementUrl);
     } else {
-      azureEnvironment = AzureCloudEnvironment.get(config
+      this.azureEnvironment = AzureCloudEnvironment.get(config
           .getConfigurationValue(AzureCredentialsConfiguration.AZURE_CLOUD_ENVIRONMENT, local));
     }
 
@@ -109,11 +124,45 @@ public class AzureCredentials {
           AzureCloudEnvironment.keysToString()));
     }
 
-    this.credentials = new ApplicationTokenCredentials(
-        config.getConfigurationValue(AzureCredentialsConfiguration.CLIENT_ID, local),
-        config.getConfigurationValue(AzureCredentialsConfiguration.TENANT_ID, local),
-        config.getConfigurationValue(AzureCredentialsConfiguration.CLIENT_SECRET, local),
-        azureEnvironment);
+    this.clientId = config.getConfigurationValue(AzureCredentialsConfiguration.CLIENT_ID, local);
+    this.domain = config.getConfigurationValue(AzureCredentialsConfiguration.TENANT_ID, local);
+    this.secret = config.getConfigurationValue(AzureCredentialsConfiguration.CLIENT_SECRET, local);
+  }
+
+  private ApplicationTokenCredentials getCredentials() {
+    return new ApplicationTokenCredentials(clientId, domain, secret, azureEnvironment);
+  }
+
+  private Azure.Authenticated getAuthenticatedAzureClient() {
+    HttpProxyParameters httpProxyParameters = AzurePluginConfigHelper.getHttpProxyParameters();
+
+    Azure.Configurable azureConfigurable = Azure.configure()
+        .withUserAgent(userAgentPid)
+        .withConnectionTimeout(AzurePluginConfigHelper.getAzureSdkConnectionTimeout(),
+            TimeUnit.SECONDS)
+        .withReadTimeout(AzurePluginConfigHelper.getAzureSdkReadTimeout(), TimeUnit.SECONDS)
+        .withMaxIdleConnections(AzurePluginConfigHelper.getAzureSdkMaxIdleConn());
+
+    boolean hasHost = httpProxyParameters != null && httpProxyParameters.getHost() != null;
+    if (hasHost) {
+      azureConfigurable = azureConfigurable.withProxy(new Proxy(Proxy.Type.HTTP,
+          new InetSocketAddress(httpProxyParameters.getHost(), httpProxyParameters.getPort())));
+
+      if (httpProxyParameters.getUsername() != null) {
+        azureConfigurable = azureConfigurable.withProxyAuthenticator(
+            new HttpProxyParametersAuthenticator(httpProxyParameters));
+      }
+    }
+
+    ApplicationTokenCredentials credentials = getCredentials();
+    Azure.Authenticated azure = azureConfigurable.authenticate(credentials);
+
+    if (hasHost && httpProxyParameters.getUsername() != null) {
+      credentials.withSslSocketFactory(new SSLTunnelSocketFactory(httpProxyParameters))
+          .withProxy(null);
+    }
+
+    return azure;
   }
 
   /**
@@ -129,13 +178,7 @@ public class AzureCredentials {
    * @return base Azure object used to access resource management APIs in Azure
    */
   public Azure authenticate() {
-    return Azure.configure()
-        .withUserAgent(userAgentPid)
-        .withConnectionTimeout(AzurePluginConfigHelper.getAzureSdkConnectionTimeout(),
-            TimeUnit.SECONDS)
-        .withReadTimeout(AzurePluginConfigHelper.getAzureSdkReadTimeout(), TimeUnit.SECONDS)
-        .withMaxIdleConnections(AzurePluginConfigHelper.getAzureSdkMaxIdleConn())
-        .authenticate(credentials).withSubscription(subId);
+    return getAuthenticatedAzureClient().withSubscription(subId);
   }
 
   /**
@@ -146,7 +189,7 @@ public class AzureCredentials {
    */
   public void validate() throws Exception {
     LOG.info("Validating credentials by authenticating with Azure.");
-    Azure.authenticate(credentials).withDefaultSubscription();
+    getAuthenticatedAzureClient().withDefaultSubscription();
   }
 
   /**
@@ -161,6 +204,54 @@ public class AzureCredentials {
    * @return base MSIManager object used to access MSI APIs in Azure
    */
   public MSIManager getMsiManager() {
-    return MSIManager.authenticate(credentials, subId);
+    HttpProxyParameters httpProxyParameters = AzurePluginConfigHelper.getHttpProxyParameters();
+    ApplicationTokenCredentials credentials = getCredentials();
+
+    MSIManager.Configurable msiManagerConfigurable = MSIManager.configure()
+        .withUserAgent(userAgentPid);
+
+    boolean hasHost = httpProxyParameters != null && httpProxyParameters.getHost() != null;
+    if (hasHost) {
+      msiManagerConfigurable = msiManagerConfigurable.withProxy(new Proxy(Proxy.Type.HTTP,
+          new InetSocketAddress(httpProxyParameters.getHost(), httpProxyParameters.getPort())));
+
+      if (httpProxyParameters.getUsername() != null) {
+        msiManagerConfigurable = msiManagerConfigurable.withProxyAuthenticator(
+            new HttpProxyParametersAuthenticator(httpProxyParameters));
+      }
+    }
+
+    MSIManager msiManager = msiManagerConfigurable.authenticate(credentials, subId);
+
+    if (hasHost && httpProxyParameters.getUsername() != null) {
+      credentials.withSslSocketFactory(new SSLTunnelSocketFactory(httpProxyParameters))
+          .withProxy(null);
+    }
+
+    return msiManager;
+  }
+
+  /**
+   * A proxy authenticator that supports basic auth. NTLM is not well supported by the underlying library, okhttp.
+   * The discussion of that can be seen here:
+   * https://github.com/square/okhttp/issues/206
+   */
+  private static class HttpProxyParametersAuthenticator implements Authenticator {
+
+    private final HttpProxyParameters httpProxyParameters;
+
+    public HttpProxyParametersAuthenticator(HttpProxyParameters httpProxyParameters) {
+      this.httpProxyParameters = requireNonNull(httpProxyParameters, "httpProxyParameters is null");
+    }
+
+    @Nullable
+    @Override
+    public Request authenticate(@Nonnull Route route, @Nonnull Response response) {
+      String credentials = Credentials.basic(httpProxyParameters.getUsername(),
+          httpProxyParameters.getPassword());
+      return response.request().newBuilder()
+          .header("Proxy-Authorization", credentials)
+          .build();
+    }
   }
 }

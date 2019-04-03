@@ -23,12 +23,12 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>azure</artifactId>
-        <version>3.1.0</version>
+        <version>3.2.0</version>
     </parent>
 
     <groupId>com.cloudera.director</groupId>
     <artifactId>azure-provider-tests</artifactId>
-    <version>3.1.0</version>
+    <version>3.2.0</version>
 
     <name>Cloudera-Director-Azure-Plugin-Tests</name>
 
@@ -36,7 +36,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-        <director-spi-v2.version>2.1.0</director-spi-v2.version>
+        <director-spi-v2.version>2.2.0</director-spi-v2.version>
         <guava.version>20.0</guava.version>
         <junit.version>4.12</junit.version>
         <slf4j.version>1.7.10</slf4j.version>

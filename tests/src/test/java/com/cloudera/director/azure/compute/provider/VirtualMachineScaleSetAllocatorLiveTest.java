@@ -24,7 +24,9 @@ import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceT
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.PUBLIC_IP;
 import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.VMSIZE;
 import static com.cloudera.director.azure.compute.provider.AzureComputeProviderConfigurationProperty.REGION;
+import static com.cloudera.director.spi.v2.model.InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX;
 import static com.cloudera.director.spi.v2.model.util.SimpleResourceTemplate.SimpleResourceTemplateConfigurationPropertyToken.GROUP_ID;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
@@ -233,7 +235,7 @@ public class VirtualMachineScaleSetAllocatorLiveTest extends AzureComputeProvide
     Map<String, String> map = TestHelper.buildValidDirectorLiveTestMap();
     map.put(PUBLIC_IP.unwrap().getConfigKey(), "No");
     map.put(GROUP_ID.unwrap().getConfigKey(), UUID.randomUUID().toString());
-    map.put(DATA_DISK_SIZE.unwrap().getConfigKey(), "4096");
+    map.put(INSTANCE_NAME_PREFIX.unwrap().getConfigKey(), "not@allowed");
     SimpleConfiguration config = new SimpleConfiguration(map);
 
     AzureComputeInstanceTemplate instanceTemplate = new AzureComputeInstanceTemplate(

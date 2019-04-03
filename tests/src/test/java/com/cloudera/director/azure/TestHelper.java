@@ -71,7 +71,7 @@ public class TestHelper {
   public static final String TEST_CENTOS_IMAGE_URN = "cloudera:cloudera-centos-os:7_4:latest";
   public static final String TEST_RHEL_IMAGE_URN = "RedHat:RHEL:7.4:latest";
   public static final String TEST_CENTOS_IMAGE_NAME = "cloudera-centos-74-latest";
-  public static final String TEST_VM_SIZE = "Standard_DS12_v2";
+  public static final String TEST_VM_SIZE = "Standard_D8S_v3";
   public static final String TEST_DATA_DISK_SIZE = "512";
   public static final String TEST_AVAILABILITY_SET_MANAGED = "managedAS";
   public static final String TEST_AVAILABILITY_SET_UNMANAGED = "unmanagedAS";
