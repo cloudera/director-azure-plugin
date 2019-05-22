@@ -23,12 +23,12 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>azure</artifactId>
-        <version>3.2.0</version>
+        <version>3.2.1</version>
     </parent>
 
     <groupId>com.cloudera.director</groupId>
     <artifactId>azure-provider-tests</artifactId>
-    <version>3.2.0</version>
+    <version>3.2.1</version>
 
     <name>Cloudera-Director-Azure-Plugin-Tests</name>
 

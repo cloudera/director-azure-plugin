@@ -1332,7 +1332,7 @@ public class VirtualMachineAllocator implements InstanceAllocator {
   private boolean setDynamicPrivateIPStatic(NetworkInterface ni) {
     final AtomicInteger counter = new AtomicInteger(0);
     Retryer<Void> retryer = RetryerBuilder.<Void>newBuilder()
-        .withWaitStrategy(WaitStrategies.exponentialWait(15, TimeUnit.SECONDS))
+        .withWaitStrategy(WaitStrategies.exponentialWait(1000L, 15, TimeUnit.SECONDS))
         .withStopStrategy(StopStrategies.stopAfterAttempt(10))
         .retryIfExceptionOfType(CloudException.class)
         .build();
