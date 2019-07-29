@@ -760,6 +760,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
 
     // skip VM image check if user is using custom image
     if (useCustomImage) {
+      LOG.info("Custom managed image is in use, skipping image validation");
       return;
     }
 
@@ -886,6 +887,7 @@ public class AzureComputeInstanceTemplateConfigurationValidator implements Confi
         localizationContext);
 
     if (!useCustomImage) {
+      LOG.info("Custom managed image is not in use, skipping custom image validation");
       return;
     }
 

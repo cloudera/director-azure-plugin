@@ -18,29 +18,18 @@
 
 package com.cloudera.director.azure.compute.provider;
 
-import static com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplateConfigurationProperty.COMPUTE_RESOURCE_GROUP;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-
 import com.cloudera.director.azure.AzureLauncher;
 import com.cloudera.director.azure.TestHelper;
 import com.cloudera.director.azure.compute.credentials.AzureCredentials;
-import com.cloudera.director.azure.compute.instance.AzureComputeInstanceTemplate;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.Azure;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.Disk;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.compute.VirtualMachine;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.NetworkInterface;
 import com.cloudera.director.azure.shaded.com.microsoft.azure.management.network.PublicIPAddress;
-import com.cloudera.director.spi.v2.model.LocalizationContext;
-import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v2.provider.Launcher;
 
 import java.io.File;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
@@ -114,7 +103,6 @@ public class AzureComputeProviderDeleteOrphanedResourcesTest {
     String tagValue = TestHelper.resourceCleanupVmTagValue();
 
     cleanUpVirtualMachines(azure, credentials, resourceGroupName, tagName, tagValue);
-    cleanUpVirtualMachineScaleSets(azure, credentials, resourceGroupName, tagName, tagValue);
   }
 
   private static void cleanUpVirtualMachines(
@@ -207,38 +195,20 @@ public class AzureComputeProviderDeleteOrphanedResourcesTest {
           resourceIds, deleteFailedBuilder);
       resourceIds.clear();
     }
-  }
 
-  private static void cleanUpVirtualMachineScaleSets(
-      Azure azure,
-      AzureCredentials credentials,
-      String resourceGroupName,
-      String tagName,
-      String tagValue) {
-
-    VirtualMachineScaleSetAllocator allocator = new VirtualMachineScaleSetAllocator(
-        azure, credentials.getMsiManager(), (p, c) -> "");
-
-    AzureComputeInstanceTemplate template = mock(AzureComputeInstanceTemplate.class);
-    when(template.getConfigurationValue(eq(COMPUTE_RESOURCE_GROUP), any(LocalizationContext.class)))
-        .thenReturn(resourceGroupName);
-
+    // Find all VMSS with key vale pair and delete them
     azure.virtualMachineScaleSets().listByResourceGroup(resourceGroupName)
         .stream()
-        .filter(vmss -> vmss.tags() != null && tagName != null && Objects.equals(vmss.tags().get(tagName), tagValue))
+        .filter(vmss -> vmss.tags() != null && tagName != null &&
+            Objects.equals(vmss.tags().get(tagName), tagValue))
         .forEach(vmss -> {
-          LOG.info("Deleting virtual machine scale set {} with tag {} -> {}", vmss.name(), tagName, tagValue);
-          when(template.getGroupId()).thenReturn(vmss.name());
-
-          try {
-            allocator.delete(
-                new DefaultLocalizationContext(Locale.getDefault(), ""),
-                template,
-                Collections.emptyList());
-            LOG.info("Virtual machine scale set {} has been deleted", vmss.name());
-          } catch (InterruptedException e) {
-            LOG.warn("Virtual machine scale set {} might not have been deleted", vmss.name(), e);
-          }
+          resourceIds.add(vmss.id());
         });
+    if (!resourceIds.isEmpty()) {
+      LOG.info("Delete VMSS with tag key/value pair {}/{} : {}", tagName, tagValue, resourceIds);
+      allocator.asyncDeleteByIdHelper(azure.virtualMachineScaleSets(), "VMSS", resourceIds,
+          deleteFailedBuilder);
+      resourceIds.clear();
+    }
   }
 }

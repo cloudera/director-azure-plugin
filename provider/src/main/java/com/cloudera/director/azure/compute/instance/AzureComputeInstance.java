@@ -112,7 +112,8 @@ public class AzureComputeInstance<T extends AzureInstance>
 
       @Override
       protected String getPropertyValue(@Nonnull AzureInstance instance) {
-        return instance.getPrimaryNetworkInterface().primaryPrivateIP();
+        NetworkInterfaceBase primaryNetworkInterface = instance.getPrimaryNetworkInterface();
+        return primaryNetworkInterface == null ? null : primaryNetworkInterface.primaryPrivateIP();
       }
     },
 

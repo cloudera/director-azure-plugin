@@ -183,12 +183,9 @@ public final class Configurations {
     final String imageMissingInConfigMsg = "Image '%s' does not exist in configurable image list.";
     final String imageConfigMissingRequiredFieldMsg = "Image '%s' config does not have all " +
         "required fields or fields are the wrong type. Check the configurable images file.";
-    final String imageMightBeCustom = "Image '%s' is referencing a Custom Image but not all required fields are set. " +
-        "To use Custom Images set the '" +
+    final String imageMightBeCustom = "Image '%s' appears to be referencing a Custom Image. Please set the '" +
         AzureComputeInstanceTemplateConfigurationProperty.USE_CUSTOM_MANAGED_IMAGE.unwrap().getConfigKey() +
-        "' and '" +
-        AzureComputeInstanceTemplateConfigurationProperty.CUSTOM_IMAGE_PLAN.unwrap().getConfigKey() +
-        "' fields.";
+        "' field for the instance template to 'Yes' for proper validation.";
 
     String imageString = template.getConfigurationValue(
         ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.IMAGE,

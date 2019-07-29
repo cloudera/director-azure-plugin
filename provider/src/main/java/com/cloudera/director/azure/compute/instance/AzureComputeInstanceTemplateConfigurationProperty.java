@@ -78,6 +78,8 @@ public enum AzureComputeInstanceTemplateConfigurationProperty implements
           "STANDARD_D32S_V3",
           "STANDARD_D16S_V3",
           "STANDARD_D8S_V3",
+          "STANDARD_D4S_V3",
+          "STANDARD_D2S_V3",
           "STANDARD_E2S_V3",
           "STANDARD_E4S_V3",
           "STANDARD_E8S_V3",
