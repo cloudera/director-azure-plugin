@@ -56,7 +56,7 @@
         <azure.version>1.14.0</azure.version>
 
         <java.version>1.8</java.version>
-        <junit.version>4.12</junit.version>
+        <junit.version>4.13.1</junit.version>
         <assertj.version>1.6.0</assertj.version>
         <mockito.version>2.23.0</mockito.version>
 
